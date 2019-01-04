@@ -318,54 +318,13 @@ def verification_loop(model, testing_loader, device):
                 perclass_f1=perclass_f1,
                 classes=classes)
 
-class MiniNet(nn.Module):
-    def __init__(self, img_size, classes):
-        super(MiniNet, self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-
-        self.img_size = img_size
-        self.final_layer_size = len(classes)
-
-        # 16*13*13 for 64x64
-        if self.img_size == [64, 64]:
-            self.fc1 = nn.Linear(16*13*13, 270)  # 16*13*13 = 2704 ~ 2.7k
-            self.fc2 = nn.Linear(270, 100)  # hidden layer
-            self.fc3 = nn.Linear(100, self.final_layer_size)
-
-        # 16*5*5 for 32x32
-        elif self.img_size == [32, 32]:
-            self.fc1 = nn.Linear(16*5*5, 200)  # 16*5*5 = 400
-            self.fc2 = nn.Linear(200, 100)  # hidden layer
-            self.fc3 = nn.Linear(100, self.final_layer_size)
-
-        else:
-            print('expect this to fail')
-            self.fc1 = nn.Linear(16*1*1, 200)  # who knows
-            self.fc2 = nn.Linear(200, 100)  # hidden layer
-            self.fc3 = nn.Linear(100, self.final_layer_size)
-
-    def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        in_features = x.shape[1]*x.shape[2]*x.shape[
-            3]  # 16*61*61=59536 for 256x256, 16*29*29 for 128x128 (one fifth the size)
-        #print(IMG_RESIZE, x.shape, in_features)
-        x = x.view(x.size(0), -1)
-        #input(x.size(0))
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
-
 
 ## INITIALIZATION ##
 
 import subprocess, argparse
 
 if __name__ == '__main__':
-    model_choices = ['inception_v3','mininet32','mininet64', 'alexnet','squeezenet',
+    model_choices = ['inception_v3', 'alexnet','squeezenet',
                      'vgg11','vgg11_bn','vgg13','vgg13_bn','vgg16','vgg16_bn','vgg19','vgg19_bn',
                      'resnet18','resnet34','resnet50','resnet101','resnet151',
                      'densenet121','densenet169','densenet161','densenet201']
@@ -433,8 +392,6 @@ if __name__ == '__main__':
 
     # setting model appropriate resize
     if args.model == 'inception_v3': pixels = [299,299]
-    elif args.model == 'mininet32':  pixels = [32,32]
-    elif args.model == 'mininet64':  pixels = [64,64]
     else:  pixels = [args.image_size,args.image_size]
 
     ## initializing data ##
@@ -455,15 +412,13 @@ if __name__ == '__main__':
 
     ## initializing model model  ##
     # options:
-    # inception_v3, mininet32, mininet64, alexnet, squeezenet,
+    # inception_v3, alexnet, squeezenet,
     # vgg11, vgg11_bn, vgg13, vgg13_bn, vgg16, vgg16_bn, vgg19, vgg19_bn,
     # resnet18, resnet34, resnet50, resnet101, resnet151,
     # densenet121, densenet169, densenet161, densenet201
 
     if args.model == 'inception_v3':
         model = MODEL_MODULE.inception_v3(num_classes=num_o_classes, aux_logits=False)
-    elif args.model.startswith('mininet'):
-        model = MiniNet(pixels,training_loader.dataset.classes)
     elif args.model == 'alexnet':
         model = getattr(MODEL_MODULE, args.model)()
         model.classifier[6] = nn.Linear(model.classifier[6].in_features,num_o_classes)
