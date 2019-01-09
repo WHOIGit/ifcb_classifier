@@ -65,9 +65,9 @@ elif args.csv:
 # show or save bar or box plot
 elif args.plot:
     if args.plot == 'bar' and args.columns is None:
-        df['f1'].plot(kind='bar')
+        df['f1'].plot(kind='barh')
     elif args.plot == 'bar' and args.columns == ['perclass_f1']:
-        df_perclass.plot(kind='bar')
+        df_perclass.plot(kind='barh')
     elif args.plot == 'box' and args.columns is None or args.columns == ['perclass_f1']:
         df.plot(kind='box')
     else:
