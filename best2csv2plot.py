@@ -64,20 +64,18 @@ elif args.csv:
         
 # show or save bar or box plot
 elif args.plot:
-    plt.tight_layout()
-    plt.autoscale()
     if args.plot == 'bar' and args.columns is None:
-        df['f1'].plot(kind='bar',rot=45)
+        df['f1'].plot(kind='bar')
     elif args.plot == 'bar' and args.columns == ['perclass_f1']:
-        df_perclass.plot(kind='bar',rot=45)
+        df_perclass.plot(kind='bar')
     elif args.plot == 'box' and args.columns is None or args.columns == ['perclass_f1']:
-        df.plot(kind='box',rot=45)
+        df.plot(kind='box')
     else:
-        df[args.columns].plot(kind=args.plot,rot=45)
-    # TODO plot axis labels etc...
+        df[args.columns].plot(kind=args.plot)
     if args.outfile:
         plt.savefig(args.outfile,bbox_inches='tight')
     else:
+        plt.tight_layout()
         plt.show()
         
 # simply show the basics of the summary file
