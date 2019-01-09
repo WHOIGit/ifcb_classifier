@@ -1,4 +1,4 @@
-# coding: utf-8
+#! /usr/bin/env python
 
 ## Builtin Imports ##
 import os
@@ -154,7 +154,7 @@ def training_loop(model, training_loader, testing_loader, epochs, logger, device
 
     training_startime = time.strftime(YMD_HMS)
     for epoch in range(epoch0+1,epochs+1):
-
+        model.train()
         epoch_startime = time.strftime(YMD_HMS)
         epoch_loss = 0
 
@@ -167,11 +167,18 @@ def training_loop(model, training_loader, testing_loader, epochs, logger, device
             # zero the parameter gradients
             optimizer.zero_grad()
 
-            # run model, also put output on gpu
-            outputs = model(inputs).to(device)
+            # run model and determin loss
+            try:
+                outputs = model(inputs).to(device)
+                loss = criterion(outputs, labels)
+            except: # inception_v3 aux_logits=True
+                outputs, aux_outputs = model(inputs)
+                outputs, aux_outputs = outputs.to(device), aux_outputs.to(device)
+                loss1 = criterion(outputs, labels)
+                loss2 = criterion(aux_outputs, labels)
+                loss = loss1+0.4*loss2
 
-            # determin loss and train model
-            loss = criterion(outputs, labels)
+            # train model
             loss.backward()
             optimizer.step()
 
@@ -199,7 +206,8 @@ def training_loop(model, training_loader, testing_loader, epochs, logger, device
                              name = savedir_name,
                              f1=verified['f1_avg'],
                              validation_loss=verified['loss'],
-                             secs_elapsed=ts2secs(training_startime, time.strftime(YMD_HMS)))
+                             secs_elapsed=ts2secs(training_startime, time.strftime(YMD_HMS)),
+                             perclass_f1=verified['perclass_f1'])
             with open(os.path.join(os.path.dirname(savepath),savedir_name+'.best.txt'),'w') as f:
                 f.write(str(state_txt))
 
@@ -226,21 +234,21 @@ def training_loop(model, training_loader, testing_loader, epochs, logger, device
         now = time.strftime(YMD_HMS)
         epoch_elapsed = ts2secs(epoch_startime, now)
         total_elapsed = ts2secs(training_startime, now)
-        print('\nEpoch {} done in {:.0f} mins. loss = {:.3f}%. F1 = {:.1f}%. Total elapsed time={:.2f} hrs'.format(epoch,
-                                                                                                         epoch_elapsed/60,
-                                                                                                         verified['loss'],
-                                                                                                         100*verified['f1_avg'],
-                                                                                                         total_elapsed/(60*60)))
-        # record best epoch, or stop early
+        output_string = '\nEpoch {} done in {:.0f} mins. loss = {:.3f}. F1 = {:.1f}%. Total elapsed time={:.2f} hrs'
+        print(output_string.format(epoch,            epoch_elapsed/60,
+                                   verified['loss'], 100*verified['f1_avg'],
+                                   total_elapsed/(60*60)) )
+
+        # note or record best epoch, or stop early
+        if best_epoch != epoch:
+            print('Best Epoch was {} with a validation loss of {:.3f} and an F1 score of {:.1f}%'.format(best_epoch,best_loss,100*best_f1))
         if best_loss > verified['loss']:
             best_loss = verified['loss']
             best_epoch = epoch
             best_f1 = verified['f1_avg']
-        elif epoch > best_epoch+int(0.5*best_epoch) and epoch > epochs/2:
+        elif epoch > 1.33*best_epoch and epoch > 16:
             print("Model probably won't be improving more from here, shutting this operation down")
             return
-        if best_epoch != epoch:
-            print('Best Epoch was {} with a validation loss of {:.3f} and an F1 score of {:.1f}%'.format(best_epoch,best_loss,100*best_f1))
 
 
 def verification_loop(model, testing_loader, device):
@@ -253,19 +261,26 @@ def verification_loop(model, testing_loader, device):
     class_correct, class_predicted, class_total = [0 for c in classes],[0 for c in classes],[0 for c in classes]
     list_true,list_predicted = [],[]
 
-    #class_total = [0 for c in classes]
+    model.eval()
     with torch.no_grad():
+        criterion = nn.CrossEntropyLoss().to(device)
         for i, data in enumerate(testing_loader, 0):
 
             # forward pass
-            images, true_labels = data
-            images, true_labels = images.to(device), true_labels.to(device)
-            outputs = model(images)
-            outputs = outputs.to(device)
+            inputs, true_labels = data
+            inputs, true_labels = inputs.to(device), true_labels.to(device)
 
-            # determine loss
-            criterion = nn.CrossEntropyLoss().to(device)
-            loss = criterion(outputs, true_labels)
+            # run model and determin loss
+            try:
+                outputs = model(inputs).to(device)
+                loss = criterion(outputs, true_labels)
+            except: # inception_v3 aux_logits=True
+                outputs, aux_outputs = model(inputs)
+                outputs, aux_outputs = outputs.to(device), aux_outputs.to(device)
+                loss1 = criterion(outputs, true_labels)
+                loss2 = criterion(aux_outputs, true_labels)
+                loss = loss1+0.4*loss2
+
             sum_loss += loss.item()
 
             _, predicted = torch.max(outputs, 1)
@@ -336,12 +351,14 @@ if __name__ == '__main__':
     #parser.add_argument("job_id", help="id of sbatch job")
     #parser.add_argument("job_name", help="name of sbatch job")
     parser.add_argument("output_dir", help="directory out output logs and saved model")
-    parser.add_argument("--epochs", default=10, type=int, help="How many epochs to run (default 10)")
+    parser.add_argument("--epochs", default=60, type=int, help="How many epochs to run (default 60).\nTraining may end before <epochs> if validation loss keeps rising beyond best_epoch*1.33")
     parser.add_argument("--batch-size", default=108, type=int, dest='batch_size',
                         help="how many images to process in a batch, (default 108, a number divisible by 1,2,3,4 to ensure even batch distribution across up to 4 GPUs)")
     parser.add_argument("--resume", default=False, nargs='?', const=True, help="path to a previously saved model to pick up from (defaults to <output_dir>)")
     parser.add_argument("--model", default='inception_v3', choices=model_choices, help="select a model. some models will override --image-size. (default to inceptin_v3)")
-    parser.add_argument("--image-size",default=224,type=int, dest='image_size',help="scales images to n-by-n pixels (default: 224)")
+    parser.add_argument("--pretrained", default=False, action='store_true', help='Preloads model with weights trained on imagenet')
+    parser.add_argument("--freeze-layers", default=None, type=int, help='freezes layers 0-n of model. assumes --pretrained or --resume. (default None)')
+    #parser.add_argument("--image-size",default=224,type=int, dest='image_size',help="scales images to n-by-n pixels (default: 224)")
     #parser.add_argument("--no-save",default=False,action="store_true",dest="no_save", help="if True, a model will not be saved under <output_dir> (default: False)")
     #parser.add_argument("--letterbox",default=False,action='store_true')
     # see https://github.com/laurent-dinh/pylearn/blob/master/pylearn2/utils/image.py find:letterbox
@@ -392,7 +409,7 @@ if __name__ == '__main__':
 
     # setting model appropriate resize
     if args.model == 'inception_v3': pixels = [299,299]
-    else:  pixels = [args.image_size,args.image_size]
+    else: pixels = [224,224]
 
     ## initializing data ##
     tforms = [transforms.Resize(pixels),  # 299x299 is minimum size for inception
@@ -418,49 +435,68 @@ if __name__ == '__main__':
     # densenet121, densenet169, densenet161, densenet201
 
     if args.model == 'inception_v3':
-        model = MODEL_MODULE.inception_v3(num_classes=num_o_classes, aux_logits=False)
+        model = MODEL_MODULE.inception_v3(args.pretrained) #, num_classes=num_o_classes, aux_logits=False)
+        model.fc = nn.Linear(model.fc.in_features, num_o_classes)
+        model.AuxLogits.fc = nn.Linear(model.AuxLogits.fc.in_features, num_o_classes)
     elif args.model == 'alexnet':
-        model = getattr(MODEL_MODULE, args.model)()
+        model = getattr(MODEL_MODULE, args.model)(args.pretrained)
         model.classifier[6] = nn.Linear(model.classifier[6].in_features,num_o_classes)
     elif args.model == 'squeezenet':
-        model = getattr(MODEL_MODULE, args.model+'1_1')()
+        model = getattr(MODEL_MODULE, args.model+'1_1')(args.pretrained)
         model.classifier[1] = nn.Conv2d(512, num_o_classes, kernel_size=(1,1), stride=(1,1))
         model.num_classes = num_o_classes
     elif args.model.startswith('vgg'):
-        model = getattr(MODEL_MODULE, args.model)()
+        model = getattr(MODEL_MODULE, args.model)(args.pretrained)
         model.classifier[6] = nn.Linear(model.classifier[6].in_features,num_o_classes)
     elif args.model.startswith('resnet'):
-        model = getattr(MODEL_MODULE, args.model)()
+        model = getattr(MODEL_MODULE, args.model)(args.pretrained)
         model.fc = nn.Linear(model.fc.in_features, num_o_classes)
     elif args.model.startswith('densenet'):
-        model = getattr(MODEL_MODULE, args.model)()
+        model = getattr(MODEL_MODULE, args.model)(args.pretrained)
         model.classifier = nn.Linear(model.classifier.in_features,num_o_classes)
 
     if torch.cuda.device_count() > 1:  # if multiple-gpu's detected, use available gpu's
         model = nn.DataParallel(model, device_ids=list(range(len(gpus))))
     model.to(device)  # sends model to GPU
-    optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+
+    # freeze layers todo untested
+    # https://spandan-madan.github.io/A-Collection-of-important-tasks-in-pytorch/
+    try:
+        num_o_layers = len(list(model.children()))
+        for i,child in enumerate(model.children()):
+            if i > args.freeze_layers: break
+            print('Freezing layer [{}/{}]: {}'.format(i, num_o_layers, child.__class__))
+            for param in child.parameters():
+                param.requires_grad = False
+    except TypeError as e:
+        if 'NoneType' in str(e): print(args.freeze_layers) ;pass # for when args.freeze_layers == None
+        else: raise e
+
+    # optimizer
+    optimizer = optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001, momentum=0.9)
 
     # load a previously saved model if one exists, if --resume enabled, otherwise use defaults
     epoch0,best_loss = 0,float('inf')
     if isinstance(args.resume,str):
-        model_savepath = args.resume
-    else: model_savepath = '{}/model.state'.format(args.output_dir)
+        model_loadpath = args.resume
+    else: model_loadpath = '{}/model.state'.format(args.output_dir)
     if args.resume:
         try:
-            savestate = torch.load(model_savepath)
+            savestate = torch.load(model_loadpath)
             model.load_state_dict(savestate['model'])
             optimizer.load_state_dict(savestate['optimizer'])
             epoch0 = savestate['epoch']
             best_loss=savestate['validation_loss']
-            print('loading saved model:',model_savepath)
+            print('loading saved model:',model_loadpath)
+            # todo: more testing of argparse inputs, and printing of loaded vars
+            # todo attempt layer-freeze here as per args.freeze_layers
         except FileNotFoundError as e:
             print(e)
-
 
     print("Model: {}".format(model.__class__))
     print("Transformations: {}".format(tforms))
     print("Epochs: {}, Batch size: {}".format(args.epochs, args.batch_size))
+    model_savepath = '{}/model.state'.format(args.output_dir)
 
     ## initializing logger ##
     logger = SummaryWriter(args.output_dir)
