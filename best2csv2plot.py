@@ -70,12 +70,14 @@ elif args.plot:
         ax.set_ylabel('')
     elif args.plot == 'bar' and args.columns == ['perclass_f1']:
         df_perclass.plot(kind='barh')
-    elif args.plot == 'box' and args.columns is None or args.columns == ['perclass_f1']:
-        df.plot(kind='box')
+    elif args.plot == 'box' and args.columns == [] or args.columns == ['perclass_f1']:
+        df_perclass.plot(kind='box',vert=False)
     else:
         df[args.columns].plot(kind=args.plot)
+
+    # output plot: save or show
     if args.outfile:
-        plt.savefig(args.outfile,bbox_inches='tight')
+        plt.savefig(args.outfile, bbox_inches='tight')
     else:
         plt.tight_layout()
         plt.show()
