@@ -23,12 +23,5 @@ echo ">> rsync ${flags[@]} $src/ $host:hpc_scratch"
 rsync ${flags[@]} $src/ $host:$hpc_scratch
 rsync ${flags[@]} $src/ $host:$hpc_home
 
-#echo '>> ssh $host "cd $hpc_scratch; sbatch *.sbatch"'
-#ssh "$host" "cd $hpc_scratch; sbatch training_run.sbatch"
-
-for f in batches/*.sbatch;do
-    echo "Queue-ing $f"
-    ssh "$host" "cd $hpc_scratch; sbatch '$f'"
-done
 
 
