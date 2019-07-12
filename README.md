@@ -5,19 +5,19 @@ This repo host an image classifying program designed to be trained on plankton i
 
 # OUTLINE
 
-data_recomb.py - a utility tool to copy an whole data set into training and evaluation datasets
+**data_recomb.py** - a utility tool to copy an whole data set into training and evaluation datasets
 
-neuston_net.py - Image classification neural net model trainer
+**neuston_net.py** - Image classification neural net model trainer
 
-neuston_run.py - Processes images using model produced by neuson_net
+**neuston_run.py** - Processes images using model produced by neuson_net
 
-plotutil.py - module to assist with in-training plotting functions
+**plotutil.py** - module to assist with in-training plotting functions
 
-classif_output_structs.py - module to help parse, process, plot the output of iterative neuston_net results
+**classif_output_structs.py** - module to help parse, process, plot the output of iterative neuston_net results
 
-data_reviewing.ipynb - Jupyter Notebook harnessing classif_output_structs to produce result analysis
+**data_reviewing.ipynb** - Jupyter Notebook harnessing classif_output_structs to produce result analysis
 
-transcribe_dupes.ipynb - Jupyter Notebook for copying chronicaly misclassified images to a new directory structure for reviewing.
+**transcribe_dupes.ipynb - Notebook for copying chronicaly misclassified images to a new directory structure for reviewing.
  
 
 # INSTALLATION
