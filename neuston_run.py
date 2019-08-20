@@ -142,6 +142,7 @@ if __name__ == '__main__':
     parser.add_argument("--loaders", default=4, type=int,
                         help='total number of threads to use for loading data to/from GPUs. 4 per GPU is good. (Default 4 total)')
     parser.add_argument("--stdout", default=False, action='store_true', help="outputs results to stdout")
+    parser.add_argument("--model_base", default='inception_v3', help='The model template to apply model weights to. default is inception_v3')
     args = parser.parse_args()
 
     # torch gpu  setup
@@ -157,7 +158,7 @@ if __name__ == '__main__':
     print("CUDA_VISIBLE_DEVICES: {}".format(gpus))
 
     ## loading model
-    model = load_model('inception_v3',args.model, device)
+    model = load_model(args.model_base,args.model, device)
 
     if torch.cuda.device_count() > 1:  # if multiple-gpu's detected, use available gpu's
         model = nn.DataParallel(model, device_ids=list(range(len(gpus))))
