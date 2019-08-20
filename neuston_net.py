@@ -154,11 +154,12 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
             optimizer.zero_grad()
 
             # run model and determine loss
+            outputs = model(inputs) #training-loop
             try:
-                outputs = model(inputs).to(device)
+                outputs = outputs.to(device)
                 batch_loss = criterion(outputs, labels)
             except AttributeError:  # e="'tuple' object has no attribute 'to'" when inception_v3 aux_logits=True
-                outputs, aux_outputs = model(inputs)
+                outputs, aux_outputs = outputs
                 outputs, aux_outputs = outputs.to(device), aux_outputs.to(device)
                 loss1 = criterion(outputs, labels)
                 loss2 = criterion(aux_outputs, labels)
@@ -266,11 +267,12 @@ def eval_loop(model, eval_loader, device, criterion=nn.CrossEntropyLoss()):
             input_images, true_input_labels = input_images.to(device), true_input_labels.to(device)
 
             # run model and determin loss
+            outputs = model(input_images)  # eval-loop
             try:
-                outputs = model(input_images).to(device)
+                outputs = outputs.to(device)
                 loss = criterion(outputs, true_input_labels)
             except AttributeError:  # e="'tuple' object has no attribute 'to'" when inception_v3 aux_logits=True
-                outputs, aux_outputs = model(input_images)
+                outputs, aux_outputs = outputs
                 outputs, aux_outputs = outputs.to(device), aux_outputs.to(device)
                 loss1 = criterion(outputs, true_input_labels)
                 loss2 = criterion(aux_outputs, true_input_labels)
