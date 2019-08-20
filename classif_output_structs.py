@@ -10,6 +10,13 @@ import plotutil
 class Epoch:
     """A Single epoch of a classification-training run"""
     def __init__(self,epoch_dict):
+        """
+
+        :param epoch_dict: epoch reults dict or filepath thereto. Must contain keys:
+            true_inputs,true images, prediction_outputs, epoch, classes, eval_loss, training_loss,
+            secs_elapsed, name, output_dir, model, training_dir, evaluation_dir, pretrained,no_normalize,
+            min_epochs,max_epochs,batch_size,loaders,augment,learning_rate
+        """
 
         if isinstance(epoch_dict,str) and os.path.isfile(epoch_dict):
             with open(epoch_dict) as f:
@@ -60,7 +67,7 @@ class Epoch:
     def output_labels(self): return [self.classes[i] for i in self.prediction_outputs]
 
     def __getattr__(self, name: str):
-        """Returns the attribute matching passed name."""
+        """Returns the attribute matching passed name if possible, else tries to calculate the value"""
         
         # Get internal dict value matching name.
         value = self.__dict__.get(name)
@@ -101,18 +108,14 @@ class Epoch:
         return brand_new_value
 
 
-    @classmethod
-    def load(cls,epoch_dict_fpath):
-        with open(epoch_dict_fpath) as f:
-             return cls(literal_eval(f.read()))
-
-
     def get_input_metadata(self):
+        """Returns dict of training-input parameters at the Run level: <as Series metedata, plus...> name,output_dir"""
         input_metadata = {}
         for a in Run.metadata_attribs:
             input_metadata[a] = self.__getattr__(a)
         return input_metadata
     def get_series_metadata(self):
+        """Returns dict of training-input parameters: at the Series level; classes,model,training_dir,evaluation_dir,pretrained,no_normalize,min_epochs,max_epochs,batch_size,loaders,augment,learning_rate"""
         series_metadata = {}
         for a in Series.metadata_attribs:
             series_metadata[a] = self.__getattr__(a)
@@ -120,8 +123,16 @@ class Epoch:
 
 
     def plot_confusion_matrix(self, title=None, output='show', sort_by='recall'):
+        """Plots a confusion matrix for all classes in epoch's results.
+
+        :param title: The plot's title. Default is "{name} (epoch={}) f1_w={}% f1_m={}"
+        :param output: How to output plot. Options are "show" or a string filepath to save the plot to. Default is "show"
+        :param sort_by: How to sort the classes on both axis. Options are "recall" and "alphabetical"
+
+        see:  plotutil.make_confusion_matrix_plot for more info
+        """
         if title is None:
-            title = '{} (epoch={}) f1_w={:.1f}%'.format(self.name,self.epoch_num,100*self.f1_weighted)
+            title = '{} (epoch={}) f1_w={:.1f}% f1_m={:.1f}%'.format(self.name,self.epoch_num,100*self.f1_weighted,100*self.f1_macro)
 
         if sort_by == 'alphabetical':
             order = sorted(self.classes)
@@ -156,13 +167,18 @@ class Epoch:
 
     def pairwise_df(self, skip_correct=False, skip_empties=False ):
 
+
+        # create a confusion matrix to count mis/classification instances
         cm = metrics.confusion_matrix(self.input_labels,self.output_labels,self.classes)
 
+        # Create a stacked dataframe of the confusin matrix such that input classes, output classes,
+        # and classification count are all separate columns
         df_matrix = pd.DataFrame(cm,index=self.classes,columns=self.classes)
         df_matrix.index.name = 'Input'
         df_matrix.columns.name = 'Output'
         df = df_matrix.stack().rename("count").reset_index()
 
+        ## Adding images column using df.apply and an images per-input-output-class dict
         # ci=class input, cp=class predicted
         pairwise_metadata = {ci:{cp:{'images':[]} for cp in self.classes} for ci in self.classes}
         combo = zip(self.input_labels,self.true_images,self.output_labels)
@@ -170,18 +186,23 @@ class Epoch:
             pairwise_metadata[input_label][output_label]['images'].append(input_image)
 
         def add_images(row):
+            # function for df.apply, returns list of images on per-row ie per input-output class basis
             input_label = row[0]
             output_label = row[1]
             images = pairwise_metadata[input_label][output_label]['images']
-            return images, len(images)
+            return images
 
-        df['images'],df['count'] = zip(*df.apply(add_images, axis=1))
+        # creation of new images column
+        df['images'] = df.apply(add_images, axis=1)
 
         if skip_correct:
+            # exclude rows where input and output class are the same ie were correctly classified
             df = df[df['Input'] != df['Output']]
         if skip_empties:
+            # exclude input-output classes that were never predicted
             df = df[df['count'] != 0]
 
+        # set input and output columns to be the multi-index.
         df = df.set_index(['Input', 'Output'])
 
         return df
@@ -197,7 +218,7 @@ class ComboEpoch(Epoch):
         self.epochs = []
         for e in epochs:
             if isinstance(e, str) and e.endswith('.dict'):
-                e = Epoch.load(e)                
+                e = Epoch(e)
             elif not isinstance(e,Epoch):
                 raise ValueError('"epochs" must be a list of Epoch, or a list of string filepaths ending in .dict')
             self.epochs.append(e)
@@ -220,13 +241,15 @@ class ComboEpoch(Epoch):
 
     def pairwise_df(self, skip_correct=True, skip_empties=True, keep_dupes=None, naughty_sort=False):
 
+        # gives us a df with input-output class-pair index and the columns: count, images
         df = super().pairwise_df(skip_correct=skip_correct, skip_empties=skip_empties)
 
-        if keep_dupes is None:
+        ## parse which images to keep based on number of times that image has been predicted for given class pair
+        if keep_dupes is None: # keep all images
             keep_dupes = range(1,len(self.epochs)+1)
         elif isinstance(keep_dupes,int):
             keep_dupes = [keep_dupes]
-        elif isinstance(keep_dupes,list): pass
+        elif isinstance(keep_dupes,list): pass  # native behavior
         elif keep_dupes.startswith('>='):
             value = int(keep_dupes.replace('>=',''))
             keep_dupes = range(value,len(self.epochs)+1)
@@ -234,34 +257,43 @@ class ComboEpoch(Epoch):
             value = int(keep_dupes.replace('>',''))
             keep_dupes = range(value+1,len(self.epochs)+1)
         elif '-' in keep_dupes:
+            # range of values, eg "3-5" -> [3,4,5]
             v1,v2 = keep_dupes.split('-')
             v1,v2 = int(v1),int(v2)
             keep_dupes = range(v1,v2+1)
         else:
+            # a string integer
             try: keep_dupes = [int(keep_dupes)]
             except: raise ValueError(keep_dupes,'not valid')
         keep_dupes = list(keep_dupes)
 
         def denote_duplicates(row):
-
+        # function for df.apply to add image_counts duplicates and update imags and counts to not have/correctly count misclassifications
+            # keep only unique images, and count how many duplicates there were of each image
             image_set = sorted(set(row['images']))
             image_set_counts = [len([i for i in row['images'] if i == img]) for img in image_set]
 
             # sort images by most repeated to least
             if image_set:  # doesn't work for empty lists
+                # order images by most frequent first
                 count_image_tups = sorted(zip(image_set_counts, image_set), reverse=True)
+                # keep only images with a certain number or range of duplicates
                 count_image_tups = [tup for tup in count_image_tups if tup[0] in keep_dupes]
-                if len(count_image_tups) == 0: return [],[],0
+                if len(count_image_tups) == 0: return [],[],0   # next lines don't work on empty lists
+                # convert ordered+redued tuple-pair back to lists
                 image_set_counts, image_set = list(zip(*count_image_tups))
                 image_set_counts, image_set = list(image_set_counts), list(image_set)
 
+            # retur new/updates row values
             return image_set, image_set_counts, len(image_set)
 
         df['images'], df['image_counts'], df['count'] = zip(*df.apply(denote_duplicates, axis=1))
         if skip_empties:
+            # exclude input-output classes that were never predicted at the specified keep_dupes threshold
             df = df[df['count'] != 0]
 
         if naughty_sort:
+            # sort rows my most duplicated and then by most frequently misclassified.
             df['naughty_rank'] = df.image_counts.apply(lambda counts: sum(c**2 for c in counts))
             df = df.sort_values('naughty_rank',ascending=False)
             df = df.drop('naughty_rank',1)
@@ -269,6 +301,11 @@ class ComboEpoch(Epoch):
         return df
 
     def naughty_dupes(self,minimum=1,plot=False):
+        """Creates df (or plat of df) containing histogram of chronically mis-classified images
+
+        :param minimum: minimum numbe of duplicates to include. Default is 1
+        :param plot: boolean. if True, return a plot axes, else returns a df. Default is False
+        """
         dupes = range(minimum, len(self.epochs)+1)
         dupe_vals = [self.pairwise_df(keep_dupes=dupe)['count'].sum() for dupe in dupes]
         df = pd.DataFrame(dict(dupes=dupes,count=dupe_vals))
@@ -307,7 +344,6 @@ class Run:
                         'augments', 'learning_rate',
                         'min_epochs', 'max_epochs',
                         'batch_size', 'loaders']
-    # + Series.metadata_attribs
 
     def __init__(self, evaluation_records:str):
         self.src = evaluation_records
@@ -367,7 +403,7 @@ class Series:
             if os.path.isdir(subdir):
                 if best_epochs_only:
                     run_or_epoch = os.path.join(subdir, 'best_epoch.dict')
-                    run_or_epoch = Epoch.load(run_or_epoch)
+                    run_or_epoch = Epoch(run_or_epoch)
                 else:
                     run_or_epoch = os.path.join(subdir,'evaluation_records.lod')
                     run_or_epoch = Run( run_or_epoch )
@@ -442,7 +478,7 @@ class Series:
         ax.set_title(title)
         return ax
 
-    def combo_epoch(self):
+    def best_epoch_combo(self):
         return ComboEpoch(self.best_epochs)
 
     def plot_loss_per_run(self):
@@ -452,14 +488,14 @@ class Series:
 class Collection:
     """ A collection of Series of equal length and the same classes"""
 
-    def __init__(self, series_list, root='output', best_epochs_only=False):
+    def __init__(self, series_list, root='output', best_epochs_only=False, same_classes=True):
         self.srcs = [os.path.join(root,series) for series in series_list]
         self.collection = []
         for src in self.srcs:
             series = Series(src, best_epochs_only=best_epochs_only)
             if self.collection:
                 assert len(series) == len(self.collection[-1])
-                assert series.classes == self.collection[-1].classes
+                if same_classes: assert series.classes == self.collection[-1].classes
             self.collection.append( series )
 
     def boxplot(self, stat, start=None, end=1.01):

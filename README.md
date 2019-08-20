@@ -17,7 +17,7 @@ This repo host an image classifying program designed to be trained on plankton i
 
 **data_reviewing.ipynb** - Jupyter Notebook harnessing classif_output_structs to produce result analysis
 
-**transcribe_dupes.ipynb - Notebook for copying chronicaly misclassified images to a new directory structure for reviewing.
+**transcribe_dupes.ipynb** - Notebook for copying chronicaly misclassified images to a new directory structure for reviewing.
  
 
 # INSTALLATION
