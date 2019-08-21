@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-#SBATCH --job-name=July18_8020
+#SBATCH --job-name=June17_5050A
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=10240
@@ -24,10 +24,9 @@ source activate ifcb-matrix
 echo "Environment... Loaded"
 
 ## SETUP OUTPUT DIRECTORY ##
-OUTDIR=output/2019-07-18_8020/July18_0"$SLURM_ARRAY_TASK_ID"
-mkdir -vp "$OUTDIR"
 
-## RUN THE TRAINING MODEL ##
-time python neuston_net.py July18_8020/train July18_8020/test "$OUTDIR" --augment flipxy
+OUTDIR=output/2019-07-18_5050_A/July18_A_0"$SLURM_ARRAY_TASK_ID"
+mkdir -vp "$OUTDIR"
+time python neuston_net.py July18_5050/train July18_5050/test "$OUTDIR" --augment flipxy
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-#SBATCH --job-name=July18_8020
+#SBATCH --job-name=testrun
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=10240
@@ -9,25 +9,23 @@
 #SBATCH --mail-user=sbatchelder@whoi.edu
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-9
-#SBATCH --output=output/slurm-out/%x_%a.out
+#SBATCH --output=output/slurm-out/test_%x.out
 
 cd /vortexfs1/scratch/sbatchelder/ifcb
 
-echo "Job ID: $SLURM_JOB_ID, JobName-ArrayID: $SLURM_JOB_NAME $SLURM_ARRAY_TASK_ID"
+echo "Job ID: $SLURM_JOB_ID, JobName: $SLURM_JOB_NAME"
 hostname; pwd; date
 
 module load cuda91/toolkit cuda91/blas cuda91/cudnn cuda91/fft
 module load anaconda
-source activate ifcb-matrix 
+source activate ifcb_new
 
 echo "Environment... Loaded"
 
 ## SETUP OUTPUT DIRECTORY ##
-OUTDIR=output/2019-07-18_8020/July18_0"$SLURM_ARRAY_TASK_ID"
+OUTDIR=output/new-conda-test
 mkdir -vp "$OUTDIR"
 
 ## RUN THE TRAINING MODEL ##
-time python neuston_net.py July18_8020/train July18_8020/test "$OUTDIR" --augment flipxy
-
+time python neuston_net.py least24_5050/train least24_5050/test "$OUTDIR" --augment flipxy --model squeezenet
 

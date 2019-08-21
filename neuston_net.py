@@ -18,7 +18,8 @@ from torch.utils.data import dataset
 import torchvision.models as MODEL_MODULE
 
 ## local imports ##
-import plotutil
+try: import plotutil  # installation of matplotlib is optional
+except ImportError: plotutil=None
 
 YMD_HMS = "%Y-%m-%d %H:%M:%S"
 
@@ -197,7 +198,7 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
             key=lambda c: (recall_perclass[classes.index(c)], f1_perclass[classes.index(c)]))
 
         loss_record.append((epoch_loss, assay['eval_loss']))
-        plotutil.loss(loss_record, output=savepath+'/loss_plot.png', title='{} Loss'.format(run_name))
+        if plotutil: plotutil.loss(loss_record, output=savepath+'/loss_plot.png', title='{} Loss'.format(run_name))
 
         record_epoch_stats(epoch=epoch, eval_dict=assay, append=True, name=run_name,
                            training_loss=epoch_loss,
@@ -216,8 +217,8 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
                                secs_elapsed=ts2secs(training_startime, time.strftime(YMD_HMS)))
 
             title = '{}, f1_weighted={:.2f}% (epoch {})'.format(run_name, 100*f1_weighted, epoch)
-            plotutil.make_confusion_matrix_plot(input_labels, output_labels, classes_by_recall, title,
-                        outfile=savepath+'/confusion_matrix.png', show=False, text_as_percentage=True)
+            if plotutil: plotutil.make_confusion_matrix_plot(input_labels, output_labels, classes_by_recall, title,
+                                  outfile=savepath+'/confusion_matrix.png', show=False, text_as_percentage=True)
 
 
         # terminal output
