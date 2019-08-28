@@ -5,21 +5,24 @@
 import argparse
 import fnmatch, glob
 import os
+from datetime import datetime, timedelta
 
 # Torch imports
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.models as MODEL_MODULE
 from torchvision.datasets.folder import default_loader
 from torchvision import transforms, datasets
 from torch.utils.data import Dataset, DataLoader
 
+# 3rd Party Imports
+import ifcb
 
 
-def load_model(model_type, model_path, device:str='cpu'):
+def load_model(model_type, model_path, output_layer_size, device=torch.device('cpu')):
     # assumes model is trained on gpu
 
-    output_layer_size = 105  # due to linear regression
     if model_type == 'inception_v3':
         model = MODEL_MODULE.inception_v3()  #, num_classes=num_o_classes, aux_logits=False)
         model.fc = nn.Linear(model.fc.in_features, output_layer_size)
@@ -41,20 +44,18 @@ def load_model(model_type, model_path, device:str='cpu'):
         model = getattr(MODEL_MODULE, model_type)()
         model.classifier = nn.Linear(model.classifier.in_features, output_layer_size)
 
-
     if device == torch.device('cpu'):
-        model.load_state_dict( torch.load(model_path, map_location=device) )
-    else: # torch.device('cuda')
+        model.load_state_dict(torch.load(model_path, map_location=device))
+    else:  # torch.device('cuda')
         model.load_state_dict(torch.load(model_path))
-        model.to( device )
+        model.to(device)
 
     model.eval()
     return model
 
 
 def run_model(model, input_loader, device):
-
-    all_input_image_paths = []
+    all_input_image_IDs = []
     all_predicted_output_classes = []
 
     model.eval()
@@ -62,12 +63,12 @@ def run_model(model, input_loader, device):
         for i, data in enumerate(input_loader):
 
             # forward pass
-            input_images, input_image_paths = data
+            input_images, input_image_IDs = data
             input_images = input_images.to(device)
 
             # run model and determin loss
             outputs = model(input_images)
-            if isinstance(outputs,tuple):  # e="'tuple' object has no attribute 'to'" when inception_v3 aux_logits=True
+            if isinstance(outputs, tuple):  #inception_v3 clause
                 outputs, aux_outputs = outputs
 
             # format results
@@ -78,20 +79,23 @@ def run_model(model, input_loader, device):
             # for all elements of outside list. Therefor len(predicted)==len(output)==batch_size
             # output_classes are a list of class/node indexes, not string labels
 
-            all_predicted_output_classes.extend([p.item() for p in output_classes])
-            all_input_image_paths.extend(input_image_paths)
+            loop_output = [p.item() for p in output_classes]
+            all_predicted_output_classes.extend(loop_output)
+            all_input_image_IDs.extend(input_image_IDs)
 
             # printing progress
             testing_progressbar(i, len(input_loader))
 
     # result metrics
-    assay = dict(inputs=all_input_image_paths,
+    # TODO save model metadata next to model
+    # include: model_type, classes by index, torch tensor size format, output-layer size.
+    assay = dict(inputs=all_input_image_IDs,
                  outputs=all_predicted_output_classes)
-    print()
     return assay
 
+
 def testing_progressbar(batch: int, batches: int, batches_per_dot: int = 1, batches_per_line: int = 100):
-    if batch%batches_per_line == batches_per_line-1 or batch == 0:
+    if batch%batches_per_line == batches_per_line:  # or batch == 0:
         phase_percent_done = 100*batch/batches
         print('\nVerification {:1.1f}% complete'.format(phase_percent_done), end=' ', flush=True)
 
@@ -102,7 +106,7 @@ def testing_progressbar(batch: int, batches: int, batches_per_dot: int = 1, batc
 class ImageDataset(Dataset):
     """
     Custom dataset that includes image file paths. Extends torchvision.datasets.ImageFolder
-    Example setup:      dataloader = torch.utils.DataLoader(ImageFolderWithPaths("path/to/your/perclass/image/folders"))
+    Example setup:     dataloader = torch.utils.DataLoader(ImageFolderWithPaths("path/to/your/perclass/image/folders"))
     Example usage:     for inputs,labels,paths in my_dataloader: ....
     instead of:        for inputs,labels in my_dataloader: ....
     adapted from: https://gist.github.com/andrewjong/6b02ff237533b3b2c554701fb53d5c4d
@@ -113,8 +117,8 @@ class ImageDataset(Dataset):
                             if any([img.endswith(ext) for ext in datasets.folder.IMG_EXTENSIONS])]
 
         # use 299x299 for inception_v3, all other models use 244x244
-        self.transform =  transforms.Compose([transforms.Resize([resize,resize]),
-                                              transforms.ToTensor()])
+        self.transform = transforms.Compose([transforms.Resize([resize, resize]),
+                                             transforms.ToTensor()])
 
         if len(self.image_paths) < len(image_paths):
             print('{} non-image files were ommited'.format(len(image_paths)-len(self.image_paths)))
@@ -131,18 +135,82 @@ class ImageDataset(Dataset):
     def __len__(self):
         return len(self.image_paths)
 
+
+try:
+    from torch.utils.data import IterableDataset
+
+
+    class IfcbImageDataset(IterableDataset):
+        def __init__(self, data_path, resize):
+            self.dd = ifcb.DataDirectory(data_path)
+
+            # use 299x299 for inception_v3, all other models use 244x244
+            if isinstance(resize, int):
+                resize = (resize, resize)
+            self.resize = resize
+
+        def __iter__(self):
+            for bin in self.dd:
+                print(bin)
+                for target_number, img in bin.images.items():
+                    target_pid = bin.pid.with_target(target_number)
+                    img = torch.Tensor([img]*3)
+                    img = transforms.Resize(self.resize)(transforms.ToPILImage()(img))
+                    img = transforms.ToTensor()(img)
+                    yield img, target_pid
+
+        def __len__(self):
+            """warning: for large datasets, this is very very slow"""
+            return sum(len(bin) for bin in self.dd)
+except ImportError:
+    IfcbImageDataset = None
+
+
+class IfcbBinDataset(Dataset):
+    def __init__(self, bin, resize):
+        self.bin = bin
+        self.images = []
+        self.pids = []
+
+        # use 299x299 for inception_v3, all other models use 244x244
+        if isinstance(resize, int):
+            resize = (resize, resize)
+        self.resize = resize
+
+        for target_number, img in bin.images.items():
+            target_pid = bin.pid.with_target(target_number)
+            self.images.append(img)
+            self.pids.append(target_pid)
+
+    def __getitem__(self, item):
+        img = self.images[item]
+        img = torch.Tensor([img]*3)
+        img = transforms.Resize(self.resize)(transforms.ToPILImage()(img))
+        img = transforms.ToTensor()(img)
+        return img, self.pids[item]
+
+    def __len__(self):
+        return len(self.pids)
+
+
 if __name__ == '__main__':
     print("pyTorch VERSION:", torch.__version__)
     parser = argparse.ArgumentParser()
+    parser.add_argument('src', help='one or more image paths or directories')
     parser.add_argument('model', help='path to the trained ifcb classifier model')
-    parser.add_argument('src', nargs='+', help='one or more image paths or directories')
-    parser.add_argument('--filter', default='*.png', help='keep from src only files that match --filter, default is *.png')
+    parser.add_argument('class_nums', type=int, help='number of output classes')
+    parser.add_argument('--model_arch', default='inception_v3',
+                        help='The model template to apply model weights to. default is inception_v3')
+    parser.add_argument('--filter', default='*.png',
+                        help='keep from src only files that match --filter, default is *.png')
     parser.add_argument("--batch-size", default=108, type=int, dest='batch_size',
                         help="how many images to process in a batch, (default 108, a number divisible by 1,2,3,4 to ensure even batch distribution across up to 4 GPUs)")
     parser.add_argument("--loaders", default=4, type=int,
                         help='total number of threads to use for loading data to/from GPUs. 4 per GPU is good. (Default 4 total)')
-    parser.add_argument("--stdout", default=False, action='store_true', help="outputs results to stdout")
-    parser.add_argument("--model_base", default='inception_v3', help='The model template to apply model weights to. default is inception_v3')
+    parser.add_argument("--outfile", default='stdout',
+                        help="outputs results to file. If not included, defaults to stdout")
+    parser.add_argument("--bins", default=False, action='store_true',
+                        help="if included, src is processed as directory with ifcb bins")
     args = parser.parse_args()
 
     # torch gpu  setup
@@ -158,35 +226,59 @@ if __name__ == '__main__':
     print("CUDA_VISIBLE_DEVICES: {}".format(gpus))
 
     ## loading model
-    model = load_model(args.model_base,args.model, device)
+    model = load_model(args.model_arch, args.model, args.class_nums, device)
 
     if torch.cuda.device_count() > 1:  # if multiple-gpu's detected, use available gpu's
         model = nn.DataParallel(model, device_ids=list(range(len(gpus))))
 
+    resize = 299 if args.model_arch == 'inception_v3' else 244  # todo is this correct val?
+
     ## ingesting input
-    inputs = []
-    for elem in args.src:
-        if os.path.isfile(elem) and fnmatch.fnmatch(elem,args.filter):
-            inputs.append(elem)
-        elif os.path.isdir(elem):
-            matches = glob.glob(os.path.join(elem,'**',args.filter), recursive=True)
-            matches.sort()
-            inputs.extend(matches)
-        else:
-            print(elem,'is not a file or a directory')
-            # todo injest a file list
+    if args.bins:
+        #image_dataset = IfcbImageDataset(args.src, resize)
+        dd = ifcb.DataDirectory(args.src)
+        num_of_bins = len(dd)
+        for i, bin in enumerate(dd):
+            image_dataset = IfcbBinDataset(bin, resize)
+            image_loader = DataLoader(image_dataset, batch_size=args.batch_size,
+                                      pin_memory=True, num_workers=args.loaders)
 
-    print('Files to ingest:', len(inputs))
-    image_dataset = ImageDataset(inputs, resize=299)
-    image_loader = DataLoader(image_dataset, batch_size=args.batch_size,
-                              pin_memory=True, num_workers=args.loaders)
+            print('{:.02f}% {} images:{}, batches:{}'.format(100*i/num_of_bins, bin, len(image_dataset),
+                                                             len(image_loader)), end=' -- ', flush=True)
 
-    results = run_model(model, image_loader, device)
-    # returns {inputs:[...], outputs:[...]}
-    print()
-    if args.stdout:
-        for i,o in zip(*results.values()):
-            print(o,i)
+            results = run_model(model, image_loader, device)
+            print()
+
+            for pid, class_id in zip(*results.values()):
+                if args.outfile == 'stdout':
+                    print(pid, class_id)
+                else:  # to file
+                    with open(args.outfile, 'a') as f:
+                        txt = '{},{}\n'.format(pid, class_id)
+                        f.write(txt)
+
+    else:
+        # classic image-based ingestion #
+        inputs = []
+        for elem in args.src:
+            if os.path.isfile(elem) and fnmatch.fnmatch(elem, args.filter):
+                inputs.append(elem)
+            elif os.path.isdir(elem):
+                matches = glob.glob(os.path.join(elem, '**', args.filter), recursive=True)
+                matches.sort()
+                inputs.extend(matches)
+            else:
+                print(elem, 'is not a file or a directory')
+                # todo injest a file list
+
+        print('Files to ingest:', len(inputs))
+        image_dataset = ImageDataset(inputs, resize)
+        image_loader = DataLoader(image_dataset, batch_size=args.batch_size,
+                                  pin_memory=True, num_workers=args.loaders)
+
+        results = run_model(model, image_loader, device)
+        # returns {inputs:[...], outputs:[...]}
+
 
 
 
