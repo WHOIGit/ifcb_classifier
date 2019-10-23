@@ -114,7 +114,7 @@ def make_confusion_matrix_plot(true_labels, predict_labels, labels, title='Confu
 
 
 
-def loss(train_eval_loss_tuples, output='show', title='', normalize=True):
+def loss(train_eval_loss_tuples, output='show', title='Loss', normalize=True):
     """ plot training and evaluation loss trends """
     train_loss, eval_loss = zip(*train_eval_loss_tuples)
     if normalize:
