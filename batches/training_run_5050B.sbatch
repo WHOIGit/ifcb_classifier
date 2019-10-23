@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-#SBATCH --job-name=July18_5050B
+#SBATCH --job-name=Aug29-5050B
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=10240
@@ -19,14 +19,14 @@ hostname; pwd; date
 
 module load cuda91/toolkit cuda91/blas cuda91/cudnn cuda91/fft
 module load anaconda
-source activate ifcb-matrix 
+source activate ifcb
 
 echo "Environment... Loaded"
 
 ## SETUP OUTPUT DIRECTORY ##
 
-OUTDIR=output/2019-07-18_5050_B/July18_B_0"$SLURM_ARRAY_TASK_ID"
+OUTDIR=output/Aug29_5050_B/Aug29_B_0"$SLURM_ARRAY_TASK_ID"
 mkdir -vp "$OUTDIR"
-time python neuston_net.py July18_5050/test July18_5050/train "$OUTDIR" --augment flipxy --batch-size 109
+time ./neuston_net.py from-sosiknas/Aug29_fullset $OUTDIR --split 50:50 --class-config master_classlist.csv mvco_northeastshelf_train_cfg --model inception_v3 --pretrained --augment flipxy --seed 5050 --swap
 
 
