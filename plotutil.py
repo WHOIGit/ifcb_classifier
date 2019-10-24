@@ -3,9 +3,14 @@
 import matplotlib as mpl
 #mpl.use('Agg')
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, classification
 import numpy as np
 import itertools
+import warnings
+
+warnings.filterwarnings("ignore",
+    category=classification.UndefinedMetricWarning)
+
 
 
 def make_confusion_matrix_plot(true_labels, predict_labels, labels, title='Confusion matrix', normalize_mapping=True, text_as_percentage=False, output='show'):

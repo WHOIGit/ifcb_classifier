@@ -5,6 +5,7 @@ import os
 import time
 import random
 from ast import literal_eval
+import warnings
 
 ## 3rd party library imports ##
 import pandas as pd
@@ -24,6 +25,8 @@ try: import plotutil  # installation of matplotlib is optional
 except ImportError: plotutil=None
 
 YMD_HMS = "%Y-%m-%d %H:%M:%S"
+warnings.filterwarnings("ignore",
+    category=metrics.classification.UndefinedMetricWarning)
 
 ### UTILITIES ###
 
@@ -60,10 +63,13 @@ class NeustonDataset(Dataset):
         self.root = root
         if not images_perclass:
             images_perclass = self.fetch_images_perclass(root)
-        self.classes = sorted(list(images_perclass.keys()))
+        fetched_classes = images_perclass.keys()
 
         self.minimum_images_per_class = max(1,minimum_images_per_class)  # always at least 1.
         images_perclass = {label:images for label,images in images_perclass.items() if len(images)>=self.minimum_images_per_class}
+        self.classes_ignored_from_too_few_samples = sorted(set(fetched_classes)-set(images_perclass.keys()))
+        self.classes = sorted(images_perclass.keys())
+
         # flatten images_perclass to congruous list of image paths and target id's
         self.targets, self.images = zip(*((self.classes.index(t), i) for t in images_perclass for i in images_perclass[t]))
         self.transforms = transforms
@@ -127,39 +133,68 @@ class NeustonDataset(Dataset):
     @classmethod
     def from_csv(cls, root, csv_file, column_to_run, transforms=None, minimum_images_per_class=None):
         #1) load csv
-        df = pd.read_csv('master_classlist.csv', header=0)
+        df = pd.read_csv(csv_file, header=0)
         base_list = df.iloc[:,0].tolist()      # first column
         mod_list = df[column_to_run].tolist()  # chosen column
 
         #2) get list of files
         default_images_perclass = cls.fetch_images_perclass(root)
-        skipped_classes = [c for c in default_images_perclass if c not in base_list]
-        msg = 'class {} from root dir {} not found in {}; it will be skipped.'
-        skip_msgs = [msg.format(c,root,os.path.basename(csv_file)) for c in skipped_classes]
-        print('\n'.join(skip_msgs))
+        missing_classes_root = [c for c in default_images_perclass if c not in base_list]
 
         #3) for classes in column to run, keep 1's, dump 0's, combine named
         new_images_perclass = {}
+        missing_classes_csv = []
+        skipped_classes = []
+        grouped_classes = {}
         for base,mod in zip(base_list,mod_list):
             if base not in default_images_perclass:
-                print('class "{}" from {} not found in root dir "{}"'.format(base, os.path.basename(csv_file), root))
-                skipped_classes.append(base)
+                missing_classes_csv.append(base)
                 continue
 
             if mod == '0':    # don't include this class
-                continue
+                skipped_classes.append(base)
             elif mod == '1':
-                target = base # include this class
+                class_label = base # include this class
             else:
-                target = mod  # rename/group base class as mod
+                class_label = mod  # rename/group base class as mod
+                if mod not in grouped_classes:
+                    grouped_classes[mod] = [base]
+                else:
+                    grouped_classes[mod].append(base)
 
             # transcribing images
-            if target not in new_images_perclass:
-                new_images_perclass[target] = default_images_perclass[base]
+            if class_label not in new_images_perclass:
+                new_images_perclass[class_label] = default_images_perclass[base]
             else:
-                new_images_perclass[target].extend(default_images_perclass[base])
+                new_images_perclass[class_label].extend(default_images_perclass[base])
 
-        #4) create dataset
+        #4) print messages
+        if missing_classes_root:
+            msg = '\n{} of {} classes from root dir {} were NOT FOUND in {}'
+            msg = msg.format(len(missing_classes_root),len(default_images_perclass.keys()),root,os.path.basename(csv_file))
+            print('\n    '.join([msg]+missing_classes_root))
+
+        if missing_classes_csv:
+            msg = '\n{} of {} classes from {} were NOT FOUND in root dir {}'
+            msg = msg.format(len(missing_classes_csv),len(base_list), os.path.basename(csv_file), root)
+            print('\n    '.join([msg]+missing_classes_csv))
+
+        if grouped_classes:
+            msg = '\n{} GROUPED classes were created, as per {}'
+            msg = msg.format(len(grouped_classes), os.path.basename(csv_file))
+            print(msg)
+            for mod,base_entries in grouped_classes.items():
+                print('  {}'.format(mod))
+                msgs = '      <-- {}'
+                msgs = [msgs.format(c) for c in base_entries]
+                print('\n'.join(msgs))
+
+        if skipped_classes:
+            msg = '\n{} classes were SKIPPED, as per {}'
+            msg = msg.format(len(skipped_classes), os.path.basename(csv_file))
+            print('\n    '.join([msg]+skipped_classes))
+
+        #5) create dataset
         return cls(root=root, images_perclass=new_images_perclass, transforms=transforms, minimum_images_per_class=minimum_images_per_class)
 
     def __getitem__(self,index):
@@ -202,7 +237,7 @@ def record_epoch_stats(epoch, eval_dict, training_loss, cli_args, name, savepath
     save_dict['training_loss'] = training_loss
     save_dict.update(cli_args)
 
-    fpath = '{}/{}'.format(savepath, filename)
+    fpath = os.path.join(savepath, filename)
     #print('writing to', fpath, '... ', end='')
 
     if append:
@@ -518,6 +553,20 @@ if __name__ == '__main__':
         evaluation_dataset, training_dataset = dataset_tup
     else:
         training_dataset, evaluation_dataset = dataset_tup
+
+    ci_nd = nd.classes_ignored_from_too_few_samples
+    ci_train = training_dataset.classes_ignored_from_too_few_samples
+    ci_eval = evaluation_dataset.classes_ignored_from_too_few_samples
+    assert ci_eval == ci_train
+    if ci_nd:
+        msg = '\n{} out of {} classes ignored from --class-minimum {}, pre-split'
+        msg = msg.format(len(ci_nd),len(nd.classes+ci_nd),args.class_minimum)
+        print('\n    '.join([msg]+ci_nd))
+    if ci_eval:
+        msg = '\n{} out of {} classes ignored from --class-minimum {}, post-split'
+        msg = msg.format(len(ci_eval),len(evaluation_dataset.classes+ci_eval),args.class_minimum)
+        print('\n    '.join([msg]+ci_eval))
+
 
     ## TESTING SEED ##
     #images = training_dataset.images + evaluation_dataset.images
