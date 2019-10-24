@@ -63,15 +63,15 @@ class NeustonDataset(Dataset):
         self.root = root
         if not images_perclass:
             images_perclass = self.fetch_images_perclass(root)
-        fetched_classes = images_perclass.keys()
 
         self.minimum_images_per_class = max(1,minimum_images_per_class)  # always at least 1.
-        images_perclass = {label:images for label,images in images_perclass.items() if len(images)>=self.minimum_images_per_class}
-        self.classes_ignored_from_too_few_samples = sorted(set(fetched_classes)-set(images_perclass.keys()))
-        self.classes = sorted(images_perclass.keys())
+        new_images_perclass = {label:images for label,images in images_perclass.items() if len(images)>=self.minimum_images_per_class}
+        classes_ignored = sorted(set(images_perclass.keys())-set(new_images_perclass.keys()))
+        self.classes_ignored_from_too_few_samples = [(c,len(images_perclass[c])) for c in classes_ignored]
+        self.classes = sorted(new_images_perclass.keys())
 
         # flatten images_perclass to congruous list of image paths and target id's
-        self.targets, self.images = zip(*((self.classes.index(t), i) for t in images_perclass for i in images_perclass[t]))
+        self.targets, self.images = zip(*((self.classes.index(t), i) for t in new_images_perclass for i in new_images_perclass[t]))
         self.transforms = transforms
 
     @staticmethod
@@ -185,7 +185,7 @@ class NeustonDataset(Dataset):
             print(msg)
             for mod,base_entries in grouped_classes.items():
                 print('  {}'.format(mod))
-                msgs = '      <-- {}'
+                msgs = '     <-- {}'
                 msgs = [msgs.format(c) for c in base_entries]
                 print('\n'.join(msgs))
 
@@ -559,13 +559,16 @@ if __name__ == '__main__':
     ci_eval = evaluation_dataset.classes_ignored_from_too_few_samples
     assert ci_eval == ci_train
     if ci_nd:
-        msg = '\n{} out of {} classes ignored from --class-minimum {}, pre-split'
+        msg = '\n{} out of {} classes ignored from --class-minimum {}, PRE-SPLIT'
         msg = msg.format(len(ci_nd),len(nd.classes+ci_nd),args.class_minimum)
+        ci_nd = ['({:2}) {}'.format(l,c) for c,l in ci_nd]
         print('\n    '.join([msg]+ci_nd))
     if ci_eval:
-        msg = '\n{} out of {} classes ignored from --class-minimum {}, post-split'
+        msg = '\n{} out of {} classes ignored from --class-minimum {}, POST-SPLIT'
         msg = msg.format(len(ci_eval),len(evaluation_dataset.classes+ci_eval),args.class_minimum)
+        ci_eval = ['({:2}) {}'.format(l,c) for c,l in ci_eval]
         print('\n    '.join([msg]+ci_eval))
+    print()
 
 
     ## TESTING SEED ##
