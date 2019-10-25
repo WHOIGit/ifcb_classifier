@@ -2,6 +2,7 @@ import os
 from ast import literal_eval
 from sklearn import metrics
 import pandas as pd
+import matplotlib as mpl
 from statistics import stdev, mean
 
 import plotutil
@@ -45,8 +46,6 @@ class Epoch:
 
         # Series/Input metadata
         self.model          = epoch_dict['model']
-        self.training_dir   = epoch_dict['training_dir']
-        self.eval_dir       = epoch_dict['evaluation_dir']
         self.pretrained     = epoch_dict['pretrained']
         self.normalized     = not epoch_dict['no_normalize']
         self.min_epochs     = epoch_dict['min_epochs']
@@ -55,7 +54,23 @@ class Epoch:
         self.loaders        = epoch_dict['loaders']
         self.augments       = epoch_dict['augment']
         self.learning_rate  = epoch_dict['learning_rate']
-
+        try:
+            self.training_dir   = epoch_dict['training_dir']
+            self.eval_dir       = epoch_dict['evaluation_dir']
+            self.src = (self.training_dir, self.eval_dir)
+        except KeyError:
+            self.src = epoch_dict['src'] if 'src' in epoch_dict else epoch_dict['root'] # todo delete this eventually
+            self.seed = epoch_dict['seed']
+            self.split = epoch_dict['split'].split(':')
+            self.swap = epoch_dict['swap'] # typically either None or True
+            if self.split == (50,50) and self.swap is None:
+                self.swap = False
+            elif self.swap:
+                self.split = self.split[1],self.split[0]
+            self.training_dir = dict(src=self.src, split='{}%'.format(self.split[0]), seed=self.seed, swap=self.swap)
+            self.eval_dir     = dict(src=self.src, split='{}%'.format(self.split[1]), seed=self.seed, swap=self.swap)
+            self.class_minimum = epoch_dict['class_minimum']
+            self.class_config = epoch_dict['class_config']
         # derived values, non proc intensive. otherwise see __getattr__
         self.hours_elapsed = round(self.secs_elapsed/60/60, 2)
         self.mins_per_epoch = round(self.secs_elapsed/60/self.epoch_num, 2)
@@ -115,7 +130,7 @@ class Epoch:
             input_metadata[a] = self.__getattr__(a)
         return input_metadata
     def get_series_metadata(self):
-        """Returns dict of training-input parameters: at the Series level; classes,model,training_dir,evaluation_dir,pretrained,no_normalize,min_epochs,max_epochs,batch_size,loaders,augment,learning_rate"""
+        """Returns dict of training-input parameters: at the Series level; classes,model,root,pretrained,no_normalize,min_epochs,max_epochs,batch_size,loaders,augment,learning_rate"""
         series_metadata = {}
         for a in Series.metadata_attribs:
             series_metadata[a] = self.__getattr__(a)
@@ -338,8 +353,8 @@ class Run:
     """A single classification-training run's results"""
 
     metadata_attribs = ['name', 'classes', 'output_dir'] + \
-                       ['model',
-                        'training_dir', 'eval_dir',
+                       ['model', 'src',
+                       #'training_dir', 'eval_dir',
                         'pretrained', 'normalized',
                         'augments', 'learning_rate',
                         'min_epochs', 'max_epochs',
@@ -430,6 +445,12 @@ class Series:
             stats = 'f1_weighted recall_weighted precision_weighted'.split()
         elif input_stats == 'macro':
             stats = 'f1_macro recall_macro precision_macro'.split()
+        elif input_stats == 'f1':
+            stats = 'f1_weighted f1_macro'.split()
+        elif input_stats == 'recall':
+            stats = 'recall_weighted recall_macro'.split()
+        elif input_stats == 'precision':
+            stats = 'precision_weighted precision_macro'.split()
         elif input_stats == 'all':
             stats = 'accuracy f1_weighted f1_macro recall_weighted recall_macro precision_weighted precision_macro'.split()
         else:
@@ -460,6 +481,10 @@ class Series:
 
         if sort_by == 'count':
             sort_by = sorted(self.classes, key=lambda c: self.best_epochs[0].count_perclass[self.classes.index(c)])
+        elif sort_by == 'mean':
+            sort_by = mean
+        elif sort_by in ['stdev','stddev']:
+            sort_by = stdev
 
         if isinstance(sort_by, list):
             [f1s_perclass.pop(c) for c in list(f1s_perclass.keys()) if c.split(' ', 1)[0] not in sort_by]
@@ -478,8 +503,52 @@ class Series:
         ax.set_title(title)
         return ax
 
+    def plot_stat_vs_perclass_count(self, stat='f1', figsize=(8,4), logx=True, plot_error=False):
+        counts = self.best_best_epoch.count_perclass  # should be the same for all counts assuming run/epoch seeds all the same
+
+        if stat in ['f1','recall','precision']: stat_pc=stat+'_perclass'
+        else: stat_pc = stat
+
+        stat_means = [mean([be.__getattr__(stat_pc)[i] for be in self.best_epochs]) for i, c in enumerate(self.classes)]
+        errs = [stdev([be.__getattr__(stat_pc)[i] for be in self.best_epochs]) for i, c in enumerate(self.classes)]
+        if plot_error:
+            stat_means = errs
+            errs = [0 for c in self.classes]
+        df_xy = pd.DataFrame(dict(counts=counts, stat_means=stat_means, errs=errs, classes=self.classes))
+
+        ax = df_xy.plot.scatter('counts', 'stat_means', yerr='errs', logx=logx,
+                                title='Scatter plot of {} {}_scores vs image counts, per-class'.format('error-spread of' if plot_error else 'mean',stat),
+                                figsize=figsize)
+        ax.set_ylabel(stat+' stdev' if plot_error else stat+' mean')
+        ax.grid(True, which='both', axis='x')
+
+        # formatting xticks
+        if logx:
+
+            def logx_125(n):
+                """generator that returns a sequence like [1,2,5,10,20,50,100,200,500,...] for log scale"""
+                num = 1
+                yield num
+                while num < n:
+                    msb = int(str(num)[0])
+                    if msb == 1 or msb == 5:
+                        num = 2*num
+                    else:
+                        num = int(2.5*num)  #msb == 2
+                    yield num
+
+            ticks = list(logx_125(max(counts)))
+            ax.set_xlim(0.9, ticks[-1])
+            ax.set_xticks(ticks)
+            ax.get_xaxis().set_major_formatter(mpl.ticker.ScalarFormatter())
+
+
     def best_epoch_combo(self):
         return ComboEpoch(self.best_epochs)
+
+    @property
+    def best_best_epoch(self):
+        return sorted(self.best_epochs, key=lambda be: be.eval_loss)[0]
 
     def plot_loss_per_run(self):
         raise NotImplementedError

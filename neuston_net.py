@@ -59,10 +59,10 @@ def ts2secs(ts1, ts2):
 
 class NeustonDataset(Dataset):
 
-    def __init__(self, root, minimum_images_per_class=1, transforms=None, images_perclass=None):
-        self.root = root
+    def __init__(self, src, minimum_images_per_class=1, transforms=None, images_perclass=None):
+        self.src = src
         if not images_perclass:
-            images_perclass = self.fetch_images_perclass(root)
+            images_perclass = self.fetch_images_perclass(src)
 
         self.minimum_images_per_class = max(1,minimum_images_per_class)  # always at least 1.
         new_images_perclass = {label:images for label,images in images_perclass.items() if len(images)>=self.minimum_images_per_class}
@@ -75,16 +75,16 @@ class NeustonDataset(Dataset):
         self.transforms = transforms
 
     @staticmethod
-    def fetch_images_perclass(root, ext='.png'):
-        """ folders in root are the classes """
-        classes = [d.name for d in os.scandir(root) if d.is_dir()]
+    def fetch_images_perclass(src, ext='.png'):
+        """ folders in src are the classes """
+        classes = [d.name for d in os.scandir(src) if d.is_dir()]
         classes.sort()
 
         images_perclass = {}
         for subdir in classes:
-            files = os.listdir(os.path.join(root,subdir))
+            files = os.listdir(os.path.join(src, subdir))
             files = sorted([i for i in files if i.lower().endswith(ext)])
-            images_perclass[subdir] = [os.path.join(root,subdir,i) for i in files]
+            images_perclass[subdir] = [os.path.join(src, subdir, i) for i in files]
         return images_perclass
 
     @property
@@ -124,22 +124,22 @@ class NeustonDataset(Dataset):
             d1_threshold = d2_threshold = self.minimum_images_per_class
 
         #5) create and return new datasets
-        dataset1 = NeustonDataset(root=self.root, images_perclass=d1_perclass, transforms=self.transforms, minimum_images_per_class=d1_threshold)
-        dataset2 = NeustonDataset(root=self.root, images_perclass=d2_perclass, transforms=self.transforms, minimum_images_per_class=d2_threshold)
+        dataset1 = NeustonDataset(src=self.src, images_perclass=d1_perclass, transforms=self.transforms, minimum_images_per_class=d1_threshold)
+        dataset2 = NeustonDataset(src=self.src, images_perclass=d2_perclass, transforms=self.transforms, minimum_images_per_class=d2_threshold)
         assert dataset1.classes == dataset2.classes      # possibly fails due to edge case thresholding?
         assert len(dataset1)+len(dataset2) == len(self)  # make sure we don't lose any images somewhere
         return dataset1,dataset2
 
     @classmethod
-    def from_csv(cls, root, csv_file, column_to_run, transforms=None, minimum_images_per_class=None):
+    def from_csv(cls, src, csv_file, column_to_run, transforms=None, minimum_images_per_class=None):
         #1) load csv
         df = pd.read_csv(csv_file, header=0)
         base_list = df.iloc[:,0].tolist()      # first column
         mod_list = df[column_to_run].tolist()  # chosen column
 
         #2) get list of files
-        default_images_perclass = cls.fetch_images_perclass(root)
-        missing_classes_root = [c for c in default_images_perclass if c not in base_list]
+        default_images_perclass = cls.fetch_images_perclass(src)
+        missing_classes_src = [c for c in default_images_perclass if c not in base_list]
 
         #3) for classes in column to run, keep 1's, dump 0's, combine named
         new_images_perclass = {}
@@ -169,14 +169,14 @@ class NeustonDataset(Dataset):
                 new_images_perclass[class_label].extend(default_images_perclass[base])
 
         #4) print messages
-        if missing_classes_root:
-            msg = '\n{} of {} classes from root dir {} were NOT FOUND in {}'
-            msg = msg.format(len(missing_classes_root),len(default_images_perclass.keys()),root,os.path.basename(csv_file))
-            print('\n    '.join([msg]+missing_classes_root))
+        if missing_classes_src:
+            msg = '\n{} of {} classes from src dir {} were NOT FOUND in {}'
+            msg = msg.format(len(missing_classes_src),len(default_images_perclass.keys()),src,os.path.basename(csv_file))
+            print('\n    '.join([msg]+missing_classes_src))
 
         if missing_classes_csv:
-            msg = '\n{} of {} classes from {} were NOT FOUND in root dir {}'
-            msg = msg.format(len(missing_classes_csv),len(base_list), os.path.basename(csv_file), root)
+            msg = '\n{} of {} classes from {} were NOT FOUND in src dir {}'
+            msg = msg.format(len(missing_classes_csv),len(base_list), os.path.basename(csv_file), src)
             print('\n    '.join([msg]+missing_classes_csv))
 
         if grouped_classes:
@@ -195,7 +195,7 @@ class NeustonDataset(Dataset):
             print('\n    '.join([msg]+skipped_classes))
 
         #5) create dataset
-        return cls(root=root, images_perclass=new_images_perclass, transforms=transforms, minimum_images_per_class=minimum_images_per_class)
+        return cls(src=src, images_perclass=new_images_perclass, transforms=transforms, minimum_images_per_class=minimum_images_per_class)
 
     def __getitem__(self,index):
         path = self.images[index]
@@ -484,15 +484,17 @@ if __name__ == '__main__':
 
     ## Parsing command line input ##
     parser = argparse.ArgumentParser()
-    parser.add_argument("root", help='root directory containing class folders')
+    parser.add_argument("src", help='root src directory containing class folders')
     parser.add_argument("output_dir", help="directory to output logs and saved model")
     parser.add_argument("--split", required=True, help='ratio of files to split into training and evaluation datasets. eg: "80:20" ')
-    parser.add_argument("--class-config", nargs=2, help='path to a configuration csv + column-header. Used for skipping and grouping classes in ROOT')
+    parser.add_argument("--class-config", nargs=2, help='path to a configuration csv + column-header. Used for skipping and grouping classes in SRC')
     parser.add_argument("--seed", type=int, help="specifying a seed value allows reproducability when randomizing images for training and evaluation")
     parser.add_argument("--swap", "--swap-datasets-around", action='store_true', help="swap training and evaluation datasets with each other. Useful for 50:50 dupe runs.")
     parser.add_argument("--class-minimum", type=int, default=1,
-                        help='the minimum viable number of images per class. Classes with fewer instances than this will not be included. '
-                             'Can be specified pre-SPLIT (single number) and post-SPLIT (colon-deliminated). eg "10" and "8:2" would be equivalent if SPLIT==80:20')
+                        help='the minimum viable number of images per class. Classes with fewer pre-split instances than this value will not be included.')
+    #TODO any if either dataset must drop a class, both datasets drop the class.
+    #TODO Can be specified pre-SPLIT (single number) and post-SPLIT (colon-deliminated). eg "10" and "8:2" would be equivalent if SPLIT==80:20,
+    #     but 8:3 would also be allowed, forcing eval to be the limiting factor with at least 3 not two instances needed.
     parser.add_argument("--model", default='inception_v3', choices=model_choices,
                         help="select a model architecture to train (default to inceptin_v3)")
     parser.add_argument("--pretrained", default=True, action='store_true',
@@ -542,10 +544,10 @@ if __name__ == '__main__':
     ## initializing data ##
     print('Initializing Data...')
     if not args.class_config:
-        nd = NeustonDataset(root=args.root,minimum_images_per_class=args.class_minimum)
+        nd = NeustonDataset(src=args.src,minimum_images_per_class=args.class_minimum)
     else:
         nd = NeustonDataset.from_csv(csv_file=args.class_config[0], column_to_run=args.class_config[1],
-                                     root=args.root, minimum_images_per_class=args.class_minimum)
+                                     src=args.src, minimum_images_per_class=args.class_minimum)
     ratio1,ratio2 = map(int,args.split.split(':'))
 
     dataset_tup = nd.split(ratio1, ratio2, seed=args.seed)

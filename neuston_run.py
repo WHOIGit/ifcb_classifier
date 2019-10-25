@@ -4,8 +4,8 @@
 # builtin imports
 import argparse
 import fnmatch, glob
-import os
-from datetime import datetime, timedelta
+import os, ast
+import h5py as h5
 
 # Torch imports
 import torch
@@ -18,10 +18,31 @@ from torch.utils.data import Dataset, DataLoader
 
 # 3rd Party Imports
 import ifcb
+import numpy as np
 
 
-def load_model(model_type, model_path, output_layer_size, device=torch.device('cpu')):
+def save_class_scores_hdf(path, bin_id, scores, roi_ids, class_labels):
+    assert scores.shape[0] == len(roi_ids), 'wrong number of ROI numbers'
+    assert scores.shape[1] == len(class_labels), 'wrong number of class labels'
+    with h5.File(path,'w') as f:
+        ds = f.create_dataset('scores', data=scores)
+        ds.attrs['bin_id'] = bin_id
+        ds.attrs['class_labels'] = [l.encode('ascii') for l in class_labels]
+        ds.attrs['roi_numbers'] = [ifcb.Pid(roi_id).target for roi_id in roi_ids]
+
+
+def load_model(model_path, device=torch.device('cpu')):
     # assumes model is trained on gpu
+
+    if device == torch.device('cpu'):
+        model_dict = torch.load(model_path, map_location=device)
+    else:  # torch.device('cuda')
+        model_dict = torch.load(model_path)
+
+    model_type = model_dict['type']
+    state_dict = model_dict['state_dict']
+    classes = model_dict['classes']
+    output_layer_size = len(classes)
 
     if model_type == 'inception_v3':
         model = MODEL_MODULE.inception_v3()  #, num_classes=num_o_classes, aux_logits=False)
@@ -44,20 +65,16 @@ def load_model(model_type, model_path, output_layer_size, device=torch.device('c
         model = getattr(MODEL_MODULE, model_type)()
         model.classifier = nn.Linear(model.classifier.in_features, output_layer_size)
 
-    if device == torch.device('cpu'):
-        model.load_state_dict(torch.load(model_path, map_location=device))
-    else:  # torch.device('cuda')
-        model.load_state_dict(torch.load(model_path))
-        model.to(device)
-
+    model.load_state_dict(state_dict)
+    if device == torch.device("cuda"): model.to(device)
     model.eval()
-    return model
+    return model,classes
 
 
 def run_model(model, input_loader, device):
     all_input_image_IDs = []
     all_predicted_output_classes = []
-
+    all_class_ranks = []
     model.eval()
     with torch.no_grad():
         for i, data in enumerate(input_loader):
@@ -79,9 +96,12 @@ def run_model(model, input_loader, device):
             # for all elements of outside list. Therefor len(predicted)==len(output)==batch_size
             # output_classes are a list of class/node indexes, not string labels
 
-            loop_output = [p.item() for p in output_classes]
-            all_predicted_output_classes.extend(loop_output)
+            #TODO capture/log outputs totally
+            # per-line output format = image-name,top-class,class1-rank,class2-rank,...classx-rank
+            output_classes = [p.item() for p in output_classes]
+            all_predicted_output_classes.extend(output_classes)
             all_input_image_IDs.extend(input_image_IDs)
+            all_class_ranks.extend(outputs.tolist()) #UNTESTED
 
             # printing progress
             testing_progressbar(i, len(input_loader))
@@ -90,7 +110,8 @@ def run_model(model, input_loader, device):
     # TODO save model metadata next to model
     # include: model_type, classes by index, torch tensor size format, output-layer size.
     assay = dict(inputs=all_input_image_IDs,
-                 outputs=all_predicted_output_classes)
+                 outputs=all_predicted_output_classes,
+                 outputs_allranks=all_class_ranks)
     return assay
 
 
@@ -196,21 +217,23 @@ class IfcbBinDataset(Dataset):
 if __name__ == '__main__':
     print("pyTorch VERSION:", torch.__version__)
     parser = argparse.ArgumentParser()
-    parser.add_argument('src', help='one or more image paths or directories')
-    parser.add_argument('model', help='path to the trained ifcb classifier model')
-    parser.add_argument('class_nums', type=int, help='number of output classes')
-    parser.add_argument('--model_arch', default='inception_v3',
-                        help='The model template to apply model weights to. default is inception_v3')
-    parser.add_argument('--filter', default='*.png',
-                        help='keep from src only files that match --filter, default is *.png')
+    parser.add_argument('src', nargs='+', help='single file or directory featuring one or more input images or bins. Searches directories recursively.')
+    parser.add_argument('--model', required=True, help='path to the trained ifcb classifier model')
+    parser.add_argument('--input_type', default='bins', choices=['bins','png'],
+                        help='Parse *.png images or *.bin bins. Default is "bins"')
+    parser.add_argument("--outdir",  default='.', help='directory results will be saved to')
+    parser.add_argument("--outfile", default="{bin}_class_V2.h5", help=
+        'If "{bin}" is in --outfile, results are written to files on a per-bin basis where "{bin}" is replaced with the Bin ID.'
+        'If --outfile is "stdout", results are output to the terminal in csv format.'
+        'If --outfile ends with .h5 or .hdf, file(s) will be hdf formatted, otherwise a csv is created.')
+
+#    parser.add_argument("--noranks", default=False, action='store_true',
+#                        help="if included, per-class ranks will not be featured in the output file")
     parser.add_argument("--batch-size", default=108, type=int, dest='batch_size',
                         help="how many images to process in a batch, (default 108, a number divisible by 1,2,3,4 to ensure even batch distribution across up to 4 GPUs)")
     parser.add_argument("--loaders", default=4, type=int,
                         help='total number of threads to use for loading data to/from GPUs. 4 per GPU is good. (Default 4 total)')
-    parser.add_argument("--outfile", default='stdout',
-                        help="outputs results to file. If not included, defaults to stdout")
-    parser.add_argument("--bins", default=False, action='store_true',
-                        help="if included, src is processed as directory with ifcb bins")
+
     args = parser.parse_args()
 
     # torch gpu  setup
@@ -226,39 +249,65 @@ if __name__ == '__main__':
     print("CUDA_VISIBLE_DEVICES: {}".format(gpus))
 
     ## loading model
-    model = load_model(args.model_arch, args.model, args.class_nums, device)
+    model,classes = load_model(args.model, device)
 
-    if torch.cuda.device_count() > 1:  # if multiple-gpu's detected, use available gpu's
+    if torch.cuda.device_count() > 1:
+        # if multiple-gpu's detected, use all available gpu's
         model = nn.DataParallel(model, device_ids=list(range(len(gpus))))
 
-    resize = 299 if args.model_arch == 'inception_v3' else 244  # todo is this correct val?
+    resize = 299 if 'inception' in str(model.__class__) else 244
+
+    ## creating output directory
+    os.makedirs(args.outdir, exist_ok=True)
 
     ## ingesting input
-    if args.bins:
-        #image_dataset = IfcbImageDataset(args.src, resize)
-        dd = ifcb.DataDirectory(args.src)
-        num_of_bins = len(dd)
-        for i, bin in enumerate(dd):
-            image_dataset = IfcbBinDataset(bin, resize)
-            image_loader = DataLoader(image_dataset, batch_size=args.batch_size,
-                                      pin_memory=True, num_workers=args.loaders)
+    if len(args.src)==1 and os.path.isdir(args.src[0]):
+        if args.input_type == 'bins':
+            assert '{bin}' in args.outfile
+            dd = ifcb.DataDirectory(args.src[0])
+            num_of_bins = len(dd)
+            for i, bin in enumerate(dd):
+                bin_id = os.path.basename(str(bin))
+                bin_dataset = IfcbBinDataset(bin, resize)
+                image_loader = DataLoader(bin_dataset, batch_size=args.batch_size,
+                                          pin_memory=True, num_workers=args.loaders)
 
-            print('{:.02f}% {} images:{}, batches:{}'.format(100*i/num_of_bins, bin, len(image_dataset),
-                                                             len(image_loader)), end=' -- ', flush=True)
+                print('{:.02f}% {} images:{}, batches:{}'.format(100*i/num_of_bins, bin, len(bin_dataset),
+                                                                 len(image_loader)), end=' -- ', flush=True)
 
-            results = run_model(model, image_loader, device)
-            print()
+                ## Running the Model ##
+                results = run_model(model, image_loader, device)
 
-            for pid, class_id in zip(*results.values()):
-                if args.outfile == 'stdout':
-                    print(pid, class_id)
-                else:  # to file
-                    with open(args.outfile, 'a') as f:
-                        txt = '{},{}\n'.format(pid, class_id)
-                        f.write(txt)
+                print()
+                outfile = os.path.join(args.outdir,args.outfile.format(bin=bin_id))
+                if args.outfile.endswith('.h5') or args.outfile.endswith('.hdf'):
+                    class_ranks_by_ids = np.array(results['outputs_allranks'])
+                    image_ids = results['inputs']
+                    # desired D20180122T180157_IFCB010_class_v2.h5   ie {bin}_class_V2.h5
+                    save_class_scores_hdf(outfile, bin_id, class_ranks_by_ids, image_ids, classes)
+                elif args.outfile.endswith('.csv'):
+                    with open(outfile,'w') as f:
+                        header = 'Image,Highest_Ranking_Class,'+','.join(classes)
+                        f.write(header+os.linesep)
+                        for image_id, class_id, class_ranks_by_id in zip(*results.values()):
+                            line = '{},{}'.format(image_id, classes[class_id])
+                            line_ranks = ','.join([str(r) for r in class_ranks_by_id])
+                            line = '{},{}'.format(line, line_ranks)
+                            f.write(line+os.linesep)
+                else:
+                    raise ValueError
+        else: # directory of images
+            raise NotImplementedError
+    else: # list of images
+        raise NotImplementedError
 
-    else:
-        # classic image-based ingestion #
+
+    #==============================================================
+    #==============================================================
+
+
+        #TODO too: classic image-based ingestion #
+"""     
         inputs = []
         for elem in args.src:
             if os.path.isfile(elem) and fnmatch.fnmatch(elem, args.filter):
@@ -278,7 +327,7 @@ if __name__ == '__main__':
 
         results = run_model(model, image_loader, device)
         # returns {inputs:[...], outputs:[...]}
-
+"""
 
 
 
