@@ -22,14 +22,35 @@ import numpy as np
 
 
 def save_class_scores_hdf(path, bin_id, scores, roi_ids, class_labels):
-    assert scores.shape[0] == len(roi_ids), 'wrong number of ROI numbers'
-    assert scores.shape[1] == len(class_labels), 'wrong number of class labels'
-    with h5.File(path,'w') as f:
-        ds = f.create_dataset('scores', data=scores)
-        ds.attrs['bin_id'] = bin_id
-        ds.attrs['class_labels'] = [l.encode('ascii') for l in class_labels]
-        ds.attrs['roi_numbers'] = [ifcb.Pid(roi_id).target for roi_id in roi_ids]
+    np_scores = np.array(scores)
+    assert np_scores.shape[0] == len(roi_ids), 'wrong number of ROI numbers'
+    assert np_scores.shape[1] == len(class_labels), 'wrong number of class labels'
 
+    try:
+        with h5.File(path,'w') as f:
+            ds = f.create_dataset('scores', data=np_scores)
+            ds.attrs['bin_id'] = bin_id
+            ds.attrs['class_labels'] = [l.encode('ascii') for l in class_labels]
+            ds.attrs['roi_numbers'] = [ifcb.Pid(roi_id).target for roi_id in roi_ids]
+    except RuntimeError as e:
+        # RuntimeError: Unable to create attribute (object header message is too large)
+        # see: https://github.com/h5py/h5py/issues/1053#issuecomment-525363860
+        print('   ',type(e),e, 'SWITCHING TO CSV OUTPUT')
+        path = path.replace('.h5','.csv').replace('.hdf','.csv')
+        save_class_scores_csv(path, bin_id, scores, roi_ids, class_labels)
+
+
+def save_class_scores_csv(path, bin_id, scores, roi_ids, classes):
+    roi_nums = [ifcb.Pid(roi_id).target for roi_id in roi_ids]
+    with open(path, 'w') as f:
+        header = bin_id+',Highest_Ranking_Class,'+','.join(classes)
+        f.write(header+os.linesep)
+        for image_id, class_ranks_by_id in zip(roi_nums,scores):
+            top_class = class_ranks_by_id.index(max(class_ranks_by_id))
+            line = '{},{}'.format(image_id, classes[top_class])
+            line_ranks = ','.join([str(r) for r in class_ranks_by_id])
+            line = '{},{}'.format(line, line_ranks)
+            f.write(line+os.linesep)
 
 def load_model(model_path, device=torch.device('cpu')):
     # assumes model is trained on gpu
@@ -66,7 +87,7 @@ def load_model(model_path, device=torch.device('cpu')):
         model.classifier = nn.Linear(model.classifier.in_features, output_layer_size)
 
     model.load_state_dict(state_dict)
-    if device == torch.device("cuda"): model.to(device)
+    if device == torch.device("cuda:0"): model.to(device)
     model.eval()
     return model,classes
 
@@ -281,25 +302,19 @@ if __name__ == '__main__':
                 print()
                 outfile = os.path.join(args.outdir,args.outfile.format(bin=bin_id))
                 if args.outfile.endswith('.h5') or args.outfile.endswith('.hdf'):
-                    class_ranks_by_ids = np.array(results['outputs_allranks'])
-                    image_ids = results['inputs']
                     # desired D20180122T180157_IFCB010_class_v2.h5   ie {bin}_class_V2.h5
-                    save_class_scores_hdf(outfile, bin_id, class_ranks_by_ids, image_ids, classes)
+                    save_class_scores_hdf(outfile, bin_id, results['outputs_allranks'], results['inputs'], classes)
                 elif args.outfile.endswith('.csv'):
-                    with open(outfile,'w') as f:
-                        header = 'Image,Highest_Ranking_Class,'+','.join(classes)
-                        f.write(header+os.linesep)
-                        for image_id, class_id, class_ranks_by_id in zip(*results.values()):
-                            line = '{},{}'.format(image_id, classes[class_id])
-                            line_ranks = ','.join([str(r) for r in class_ranks_by_id])
-                            line = '{},{}'.format(line, line_ranks)
-                            f.write(line+os.linesep)
+                    save_class_scores_csv(outfile, bin_id, results['outputs_allranks'], results['inputs'], classes)
                 else:
                     raise ValueError
         else: # directory of images
             raise NotImplementedError
     else: # list of images
         raise NotImplementedError
+
+print('Thank you Goodbye!')
+
 
 
     #==============================================================
