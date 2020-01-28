@@ -115,7 +115,7 @@ def make_confusion_matrix_plot(true_labels, predict_labels, labels, title='Confu
         #mpl.use('Agg')
         plt.savefig(output)
 
-    return fig
+    plt.close('all')
 
 
 
@@ -149,7 +149,7 @@ def loss(train_eval_loss_tuples, output='show', title='Loss', normalize=True):
         plt.savefig(output)
     else:
         return ax
-
+    plt.close('all')
 
 # TODO standalone cli functions
 import argparse

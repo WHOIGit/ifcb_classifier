@@ -3,6 +3,7 @@ from ast import literal_eval
 from sklearn import metrics
 import pandas as pd
 import matplotlib as mpl
+import matplotlib.pyplot as plt
 from statistics import stdev, mean
 
 import plotutil
@@ -32,6 +33,10 @@ class Epoch:
         self.true_inputs        = epoch_dict['true_inputs']
         self.true_images        = epoch_dict['true_images']
         self.prediction_outputs = epoch_dict['prediction_outputs']
+        try: self.prediction_ranks   = epoch_dict['prediction_ranks']
+        except KeyError: self.prediction_ranks = NotImplementedError
+        try: self.prediction_scores  = epoch_dict['prediction_allscores']
+        except KeyError: self.prediction_scores = NotImplementedError 
 
         # Epoch metadata
         self.epoch_num      = epoch_dict['epoch']
@@ -163,22 +168,85 @@ class Epoch:
                                             text_as_percentage=True,
                                             output=output)
 
-    def perclass_barplot(self, stat='f1', start=None, end=1, sort_by=['max','min','alphabetical','count'][1]):
+    def perclass_barplot(self, stat='f1', start=None, end=None, sort_by=['max','min','alphabetical','count'][1]):
         if stat == 'f1': stat_att = 'f1_perclass'
         elif stat == 'recall': stat_att = 'recall_perclass'
         elif stat == 'precision': stat_att = 'precision_perclass'
+        elif stat == 'count': stat_att = 'count_perclass'
 
         #TODO sorting
+        #TODO stat = count
 
         stat_dict = {'classes':self.classes, stat:getattr(self,stat_att), 'counts':self.count_perclass}
+        stat_dict['classes'] = ['{} [{:>4}]'.format(c, self.count_perclass[i]) for i,c in enumerate(self.classes)]
         df = pd.DataFrame(stat_dict)
         df = df.sort_values(by=stat)
-        
+                        
         ax = df.plot.barh(x='classes', y=stat, figsize=[12, len(self.classes)/3])
         ax.set_title('Perclass {} for {}'.format(stat,self.name))
         ax.grid(True, which='both', axis='x')
         ax.set_xlim(start,end)
         return ax
+
+
+    def plot_confidence_histogram(self, good_only=None, bad_only=None, classes=None):
+        if good_only is None and bad_only is None:
+            good_only = bad_only = True
+        assert good_only != False and bad_only != False
+
+        if classes is None:
+            title = 'Histogram of Classification Confidence'
+            if good_only and bad_only:
+                data = self.prediction_ranks
+            elif good_only:
+                data = [pr for pr,ti,po in zip(self.prediction_ranks,self.true_inputs,self.prediction_outputs) if ti==po]
+                title += ' (Correctly Classified Only)'
+            elif bad_only:
+                data = [pr for pr,ti,po in zip(self.prediction_ranks,self.true_inputs,self.prediction_outputs) if ti!=po]
+                title += ' (Incorrectly Classified Only)'
+
+            df = pd.DataFrame(data)
+            ax = df.T.max().hist(bins=20)
+            ax.set(title=title, xlim=(0, 1))
+            ax.set_xlabel('Confidence')
+            ax.set_ylabel('image count')
+
+        else:
+
+            if good_only and bad_only:
+                data = zip(self.prediction_ranks, self.output_labels)
+            elif good_only:
+                data = [(pr,ol) for pr,ol,il in zip(self.prediction_ranks,self.output_labels,self.input_labels) if ol==il]
+            elif bad_only:
+                data = [(pr,ol) for pr,ol,il in zip(self.prediction_ranks,self.output_labels,self.input_labels) if ol!=il]
+
+            df = pd.DataFrame(data, columns=['confidence','class'])
+            gb = df.groupby('class')
+               # TODO ORDER results, also this is really hacky
+            if classes == 'all':
+                classes = self.classes[:]
+            elif isinstance(classes,str):
+                classes = [classes]
+
+            fig, axes = plt.subplots(figsize=(8, 0.8*len(classes)), nrows=len(classes), ncols=1)
+            if isinstance(axes,mpl.axes._axes.Axes):axes = [axes]
+            #for group, ax in zip(gb, axes):
+            #    name, group = group
+            #    ax = group.hist(ax=ax, bins=20)[0]
+            #    ax.set(xlim=(0, 1), title=None)
+            #    ax.set_ylabel(name, rotation=0, ha='right', va='bottom')
+
+            for i,ax in enumerate(axes):
+                for group in gb:
+                    name,group = group
+                    if name in classes:
+                        classes.remove(name)
+                        ax = group.hist(ax=ax,bins=20)[0]
+                        ax.set(xlim=(0, 1),title=None)
+                        ax.set_ylabel(name, rotation=0, ha='right', va='bottom')
+                        break
+            plt.tight_layout()
+
 
     def pairwise_df(self, skip_correct=False, skip_empties=False ):
 
@@ -221,6 +289,7 @@ class Epoch:
         df = df.set_index(['Input', 'Output'])
 
         return df
+
 
 class ComboEpoch(Epoch):
 
@@ -371,9 +440,9 @@ class Run:
 
         self.best_epoch_num = 0
         self.best_eval_loss = float('inf')
-        for epoch in self.epochs:
+        for i,epoch in enumerate(self.epochs):
             if epoch.eval_loss < self.best_eval_loss:
-                self.best_epoch_num = epoch.epoch_num
+                self.best_epoch_num = i
                 self.best_eval_loss = epoch.eval_loss
         self.best_epoch = self.epochs[self.best_epoch_num]
 
@@ -408,7 +477,7 @@ class Series:
     metadata_attribs.remove('name')
     metadata_attribs.remove('output_dir')
 
-    def __init__(self, series_dir, best_epochs_only=False):
+    def __init__(self, series_dir, best_epochs_only=False, ignore_metadata=False):
         self.src = series_dir
         self.name = os.path.basename(series_dir)
 
@@ -422,7 +491,7 @@ class Series:
                 else:
                     run_or_epoch = os.path.join(subdir,'evaluation_records.lod')
                     run_or_epoch = Run( run_or_epoch )
-                if runs_or_epochs:
+                if runs_or_epochs and not ignore_metadata:
                     assert runs_or_epochs[-1].get_series_metadata() == run_or_epoch.get_series_metadata()
                 runs_or_epochs.append(run_or_epoch)
         if best_epochs_only:
@@ -557,11 +626,11 @@ class Series:
 class Collection:
     """ A collection of Series of equal length and the same classes"""
 
-    def __init__(self, series_list, root='output', best_epochs_only=False, same_classes=True):
+    def __init__(self, series_list, root='output', best_epochs_only=False, same_classes=True, ignore_series_metadata=False):
         self.srcs = [os.path.join(root,series) for series in series_list]
         self.collection = []
         for src in self.srcs:
-            series = Series(src, best_epochs_only=best_epochs_only)
+            series = Series(src, best_epochs_only=best_epochs_only, ignore_metadata=ignore_series_metadata)
             if self.collection:
                 assert len(series) == len(self.collection[-1])
                 if same_classes: assert series.classes == self.collection[-1].classes

@@ -2,6 +2,7 @@
 
 ## Builtin Imports ##
 import os
+import sys
 import time
 import random
 from ast import literal_eval
@@ -15,6 +16,7 @@ from sklearn import metrics
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torchvision import transforms, datasets
 from torch.utils.data.dataset import Dataset
 import torchvision.models as MODEL_MODULE
@@ -22,7 +24,7 @@ import torchvision
 
 ## local imports ##
 try: import plotutil  # installation of matplotlib is optional
-except ImportError: plotutil=None
+except ImportError: plotutil = None
 
 YMD_HMS = "%Y-%m-%d %H:%M:%S"
 warnings.filterwarnings("ignore",
@@ -57,6 +59,7 @@ def ts2secs(ts1, ts2):
     t1 = time.mktime(time.strptime(ts1, YMD_HMS))
     return t2-t1
 
+
 class NeustonDataset(Dataset):
 
     def __init__(self, src, minimum_images_per_class=1, transforms=None, images_perclass=None):
@@ -64,10 +67,11 @@ class NeustonDataset(Dataset):
         if not images_perclass:
             images_perclass = self.fetch_images_perclass(src)
 
-        self.minimum_images_per_class = max(1,minimum_images_per_class)  # always at least 1.
-        new_images_perclass = {label:images for label,images in images_perclass.items() if len(images)>=self.minimum_images_per_class}
+        self.minimum_images_per_class = max(1, minimum_images_per_class)  # always at least 1.
+        new_images_perclass = {label: images for label, images in images_perclass.items() if
+                               len(images) >= self.minimum_images_per_class}
         classes_ignored = sorted(set(images_perclass.keys())-set(new_images_perclass.keys()))
-        self.classes_ignored_from_too_few_samples = [(c,len(images_perclass[c])) for c in classes_ignored]
+        self.classes_ignored_from_too_few_samples = [(c, len(images_perclass[c])) for c in classes_ignored]
         self.classes = sorted(new_images_perclass.keys())
 
         # flatten images_perclass to congruous list of image paths and target id's
@@ -75,7 +79,7 @@ class NeustonDataset(Dataset):
         self.transforms = transforms
 
     @staticmethod
-    def fetch_images_perclass(src, ext='.png'):
+    def fetch_images_perclass(src):
         """ folders in src are the classes """
         classes = [d.name for d in os.scandir(src) if d.is_dir()]
         classes.sort()
@@ -83,14 +87,15 @@ class NeustonDataset(Dataset):
         images_perclass = {}
         for subdir in classes:
             files = os.listdir(os.path.join(src, subdir))
-            files = sorted([i for i in files if i.lower().endswith(ext)])
+            #files = sorted([i for i in files if i.lower().endswith(ext)])
+            files = sorted([f for f in files if os.path.splitext(f)[1] in datasets.folder.IMG_EXTENSIONS])
             images_perclass[subdir] = [os.path.join(src, subdir, i) for i in files]
         return images_perclass
 
     @property
     def images_perclass(self):
-        ipc = {c:[] for c in self.classes}
-        for img,trg in zip(self.images,self.targets):
+        ipc = {c: [] for c in self.classes}
+        for img, trg in zip(self.images, self.targets):
             ipc[self.classes[trg]].append(img)
         return ipc
 
@@ -100,7 +105,7 @@ class NeustonDataset(Dataset):
         d2_perclass = {}
         for class_label, images in self.images_perclass.items():
             #1) determine output lengths
-            d1_len = int(ratio1*len(images)/100 +0.5)
+            d1_len = int(ratio1*len(images)/100+0.5)
             d2_len = len(images)-d1_len  # not strictly needed
 
             #2) split images as per distribution
@@ -116,8 +121,8 @@ class NeustonDataset(Dataset):
 
         #4) calculate minimum_images_per_class for thresholding
         if minimum_images_per_class == 'scale':
-            d1_threshold = int(self.minimum_images_per_class*ratio1/100 +0.5)
-            d2_threshold = self.minimum_images_per_class - d1_threshold
+            d1_threshold = int(self.minimum_images_per_class*ratio1/100+0.5)
+            d2_threshold = self.minimum_images_per_class-d1_threshold
         elif isinstance(minimum_images_per_class,int):
             d1_threshold = d2_threshold = minimum_images_per_class
         else:
@@ -126,9 +131,9 @@ class NeustonDataset(Dataset):
         #5) create and return new datasets
         dataset1 = NeustonDataset(src=self.src, images_perclass=d1_perclass, transforms=self.transforms, minimum_images_per_class=d1_threshold)
         dataset2 = NeustonDataset(src=self.src, images_perclass=d2_perclass, transforms=self.transforms, minimum_images_per_class=d2_threshold)
-        assert dataset1.classes == dataset2.classes      # possibly fails due to edge case thresholding?
+        assert dataset1.classes == dataset2.classes  # possibly fails due to edge case thresholding?
         assert len(dataset1)+len(dataset2) == len(self)  # make sure we don't lose any images somewhere
-        return dataset1,dataset2
+        return dataset1, dataset2
 
     @classmethod
     def from_csv(cls, src, csv_file, column_to_run, transforms=None, minimum_images_per_class=None):
@@ -146,15 +151,16 @@ class NeustonDataset(Dataset):
         missing_classes_csv = []
         skipped_classes = []
         grouped_classes = {}
-        for base,mod in zip(base_list,mod_list):
+        for base, mod in zip(base_list, mod_list):
             if base not in default_images_perclass:
                 missing_classes_csv.append(base)
                 continue
 
-            if mod == '0':    # don't include this class
+            if str(mod) == '0':  # don't include this class
                 skipped_classes.append(base)
-            elif mod == '1':
-                class_label = base # include this class
+                continue
+            elif str(mod) == '1':
+                class_label = base  # include this class
             else:
                 class_label = mod  # rename/group base class as mod
                 if mod not in grouped_classes:
@@ -171,19 +177,20 @@ class NeustonDataset(Dataset):
         #4) print messages
         if missing_classes_src:
             msg = '\n{} of {} classes from src dir {} were NOT FOUND in {}'
-            msg = msg.format(len(missing_classes_src),len(default_images_perclass.keys()),src,os.path.basename(csv_file))
+            msg = msg.format(len(missing_classes_src), len(default_images_perclass.keys()), src,
+                             os.path.basename(csv_file))
             print('\n    '.join([msg]+missing_classes_src))
 
         if missing_classes_csv:
             msg = '\n{} of {} classes from {} were NOT FOUND in src dir {}'
-            msg = msg.format(len(missing_classes_csv),len(base_list), os.path.basename(csv_file), src)
+            msg = msg.format(len(missing_classes_csv), len(base_list), os.path.basename(csv_file), src)
             print('\n    '.join([msg]+missing_classes_csv))
 
         if grouped_classes:
             msg = '\n{} GROUPED classes were created, as per {}'
             msg = msg.format(len(grouped_classes), os.path.basename(csv_file))
             print(msg)
-            for mod,base_entries in grouped_classes.items():
+            for mod, base_entries in grouped_classes.items():
                 print('  {}'.format(mod))
                 msgs = '     <-- {}'
                 msgs = [msgs.format(c) for c in base_entries]
@@ -197,7 +204,7 @@ class NeustonDataset(Dataset):
         #5) create dataset
         return cls(src=src, images_perclass=new_images_perclass, transforms=transforms, minimum_images_per_class=minimum_images_per_class)
 
-    def __getitem__(self,index):
+    def __getitem__(self, index):
         path = self.images[index]
         target = self.targets[index]
         data = datasets.folder.default_loader(path)
@@ -208,6 +215,9 @@ class NeustonDataset(Dataset):
     def __len__(self):
         return len(self.images)
 
+    @property
+    def imgs(self):
+        return self.images
 
 
 class ImageFolderWithPaths(datasets.ImageFolder):
@@ -241,6 +251,7 @@ def record_epoch_stats(epoch, eval_dict, training_loss, cli_args, name, savepath
     #print('writing to', fpath, '... ', end='')
 
     if append:
+        # TODO CHANGE from reading in and rewriting previous file to inserting ",{save_dict}" at the nth-1 character position of the file (ie right before the closing ] )
         # read content of existing file if available
         try:
             with open(fpath, 'r') as f:
@@ -260,11 +271,10 @@ def record_epoch_stats(epoch, eval_dict, training_loss, cli_args, name, savepath
             print(save_dict, file=f)
 
 
-
 ## TRAINING AND VALIDATING ##
 
 def training_loop(model, training_loader, eval_loader, device, savepath, optimizer, criterion,
-                  normalize_weights=False, max_epochs=100, min_epochs=10, epoch0=0, best_loss=float('inf'), cli_args={}):
+                  weights=None, max_epochs=100, min_epochs=10, epoch0=0, best_loss=float('inf'), cli_args={}):
     run_name = os.path.basename(savepath)
     num_o_batches = len(training_loader)
     best_epoch = epoch0
@@ -272,28 +282,7 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
     loss_record = []  # with one train-eval loss tuple per epoch
 
     print('Training... there are {} batches per epoch'.format(num_o_batches))
-    print('Starting at epoch {} of max {}'.format(epoch0+1, max_epochs))
-
-    ## defining loss function criterion
-    try: # dataset concat clause
-        dataset = training_loader.dataset.datasets[0]
-    except AttributeError:
-        # regular
-        dataset = training_loader.dataset
-
-    if normalize_weights:
-        weights = [0 for c in dataset.classes]
-        for img, img_idx in dataset.imgs:
-            weights[img_idx] += 1
-        weights = [len(dataset.imgs)/len(weights)/weight for weight in weights]
-        weights = torch.FloatTensor(weights).to(device)
-    else:
-        weights = None
-
-    try:
-        criterion = criterion(weight=weights).to(device)
-    except TypeError:
-        criterion = criterion.to(device)
+    #print('Starting at epoch {} of max {}'.format(epoch0+1, max_epochs))
 
     # start training loop
     training_startime = time.strftime(YMD_HMS)
@@ -312,7 +301,7 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
             optimizer.zero_grad()
 
             # run model and determine loss
-            outputs = model(inputs) #training-loop
+            outputs = model(inputs)  #training-loop
             try:
                 outputs = outputs.to(device)
                 batch_loss = criterion(outputs, labels)
@@ -344,12 +333,12 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
 
         ## BOOKKEEPING ##
         classes = assay['classes']
-        input_labels =   [classes[c] for c in assay['true_inputs']]
-        output_labels =  [classes[c] for c in assay['prediction_outputs']]
-        f1_weighted =     metrics.f1_score(assay['true_inputs'], assay['prediction_outputs'], average='weighted')
-        f1_macro =        metrics.f1_score(assay['true_inputs'], assay['prediction_outputs'], average='macro')
-        f1_perclass =     metrics.f1_score(      input_labels,   output_labels, average=None)
-        recall_perclass = metrics.recall_score(  input_labels,   output_labels, average=None)
+        input_labels = [classes[c] for c in assay['true_inputs']]
+        output_labels = [classes[c] for c in assay['prediction_outputs']]
+        f1_weighted = metrics.f1_score(assay['true_inputs'], assay['prediction_outputs'], average='weighted')
+        f1_macro = metrics.f1_score(assay['true_inputs'], assay['prediction_outputs'], average='macro')
+        f1_perclass = metrics.f1_score(input_labels, output_labels, average=None)
+        recall_perclass = metrics.recall_score(input_labels, output_labels, average=None)
 
         classes_by_recall = sorted(classes, reverse=True,
             key=lambda c: (recall_perclass[classes.index(c)], f1_perclass[classes.index(c)]))
@@ -365,11 +354,13 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
         # Saving the model if it's the best
         if assay['eval_loss'] < best_loss:
             # saving model
-            torch.save({'state_dict':model.state_dict(),
-                        'classes':classes,
-                        'type':cli_args['model'],
-                        'version':{'torch':torch.__version__,
-                                   'torchvision':torchvision.__version__}}, '{}/model.pt'.format(savepath))
+            torch.save({'state_dict': model.state_dict(),
+                        'classes':    classes,
+                        'type':       cli_args['model'],
+                        'version':    {'torch':       torch.__version__,
+                                       'torchvision': torchvision.__version__}
+                        },
+                       '{}/model.pt'.format(savepath))
 
             # saving training results
             record_epoch_stats(epoch=epoch, eval_dict=assay, append=False, name=run_name,
@@ -378,9 +369,9 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
                                secs_elapsed=ts2secs(training_startime, time.strftime(YMD_HMS)))
 
             title = '{}, f1_weighted={:.2f}% (epoch {})'.format(run_name, 100*f1_weighted, epoch)
-            if plotutil: plotutil.make_confusion_matrix_plot(input_labels, output_labels, classes_by_recall, title,
-                                  output=savepath+'/confusion_matrix.png', text_as_percentage=True)
-
+            if plotutil:
+                plotutil.make_confusion_matrix_plot(input_labels, output_labels, classes_by_recall, title,
+                                          output=savepath+'/confusion_matrix.png', text_as_percentage=True)
 
         # terminal output
         now = time.strftime(YMD_HMS)
@@ -389,7 +380,6 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
         output_string = '\nEpoch {} done in {:.0f} mins. loss={:.3f}. f1_w={:.1f}% f1_m={:.1f}%. Total elapsed time={:.2f} hrs'
         print(output_string.format(epoch, epoch_elapsed/60, assay['eval_loss'],
                                    100*f1_weighted, 100*f1_macro, total_elapsed/(60*60)))
-
 
         best_epoch_text = 'Best Epoch was {} with a validation loss of {:.3f} and an F1 score of {:.1f}%'
         # note or record best epoch, or stop early
@@ -405,19 +395,18 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
             print(best_epoch_text.format(best_epoch, best_loss, 100*best_f1))
 
 
-def eval_loop(model, eval_loader, device, criterion=nn.CrossEntropyLoss()):
+def eval_loop(model, eval_loader, device, criterion):
     """ returns dict of: accuracy, loss, perclass_accuracy, perclass_correct, perclass_totals,
                          true_inputs, predicted_outputs, f1_avg, perclass_f1, classes )"""
-    try:
-        classes = eval_loader.dataset.classes
-    except AttributeError:
-        classes = eval_loader.dataset.datasets[0].classes
+
+    classes = eval_loader.dataset.classes
 
     eval_loss = 0
     all_true_input_labels = []
     all_input_image_paths = []
     all_predicted_output_labels = []
-    all_predicted_output_ranks  = []
+    all_predicted_output_ranks = []
+    all_predicted_output_allranks = []  # all the scores for all classes, not just max
 
     model.eval()
     with torch.no_grad():
@@ -443,12 +432,14 @@ def eval_loop(model, eval_loader, device, criterion=nn.CrossEntropyLoss()):
             eval_loss += loss.item()
 
             # format results
+            outputs = F.softmax(outputs, dim=1)
             predicted_output_ranks, predicted_output_labels = torch.max(outputs, 1)
             # outputs format is a tensor list of lists, inside lists are len(classes) long,
             # each with a per-class weight prediction. outide list is batch_size long.
             # doing torch.max returns the index of the highest per-class prediction (inside list),
             # for all elements of outside list. Therefor len(predicted)==len(output)==batch_size
 
+            #all_predicted_output_allranks.extend(outputs.tolist())
             all_predicted_output_labels.extend([p.item() for p in predicted_output_labels])
             all_predicted_output_ranks.extend([r.item() for r in predicted_output_ranks])
             all_true_input_labels.extend([t.item() for t in true_input_labels])
@@ -465,7 +456,8 @@ def eval_loop(model, eval_loader, device, criterion=nn.CrossEntropyLoss()):
                  classes=classes,
                  true_inputs=all_true_input_labels,
                  prediction_outputs=all_predicted_output_labels,
-                 #prediction_ranks=all_predicted_output_ranks,
+                 prediction_ranks=all_predicted_output_ranks,
+                 #prediction_allscores=all_predicted_output_allranks,
                  true_images=all_input_image_paths)
 
     return assay
@@ -486,10 +478,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("src", help='root src directory containing class folders')
     parser.add_argument("output_dir", help="directory to output logs and saved model")
-    parser.add_argument("--split", required=True, help='ratio of files to split into training and evaluation datasets. eg: "80:20" ')
-    parser.add_argument("--class-config", nargs=2, help='path to a configuration csv + column-header. Used for skipping and grouping classes in SRC')
-    parser.add_argument("--seed", type=int, help="specifying a seed value allows reproducability when randomizing images for training and evaluation")
-    parser.add_argument("--swap", "--swap-datasets-around", action='store_true', help="swap training and evaluation datasets with each other. Useful for 50:50 dupe runs.")
+    parser.add_argument("--split", required=True,
+                        help='ratio of files to split into training and evaluation datasets. eg: "80:20" ')
+    parser.add_argument("--class-config", nargs=2,
+                        help='path to a configuration csv + column-header. Used for skipping and grouping classes in SRC')
+    parser.add_argument("--seed", type=int,
+                        help="specifying a seed value allows reproducability when randomizing images for training and evaluation")
+    parser.add_argument("--swap", "--swap-datasets-around", action='store_true',
+                        help="swap training and evaluation datasets with each other. Useful for 50:50 dupe runs.")
     parser.add_argument("--class-minimum", type=int, default=1,
                         help='the minimum viable number of images per class. Classes with fewer pre-split instances than this value will not be included.')
     #TODO any if either dataset must drop a class, both datasets drop the class.
@@ -497,13 +493,13 @@ if __name__ == '__main__':
     #     but 8:3 would also be allowed, forcing eval to be the limiting factor with at least 3 not two instances needed.
     parser.add_argument("--model", default='inception_v3', choices=model_choices,
                         help="select a model architecture to train (default to inceptin_v3)")
-    parser.add_argument("--pretrained", default=True, action='store_true',
+    parser.add_argument("--pretrained", default=False, action='store_true',
                         help='Preloads model with weights trained on imagenet')
     parser.add_argument("--no-normalize", default=False, action='store_true',
                         help='if included, classes will NOT be weighted during training. Classes with fewer instances will not train as well')
-    parser.add_argument("--max-epochs", default=100, type=int,
-                        help="Maximum Number of Epochs (default 100).\nTraining may end before <max-epochs> if evaluation loss doesn't improve beyond best_epoch*1.33")
-    parser.add_argument("--min-epochs", default=10, type=int,
+    parser.add_argument("--max-epochs", default=60, type=int,
+                        help="Maximum Number of Epochs (default 60).\nTraining may end before <max-epochs> if evaluation loss doesn't improve beyond best_epoch*1.33")
+    parser.add_argument("--min-epochs", default=16, type=int,
                         help="Minimum number of epochs to run (default 10)")
     parser.add_argument("--batch-size", default=108, type=int, dest='batch_size',
                         help="how many images to process in a batch, (default 108, a number divisible by 1,2,3,4 to ensure even batch distribution across up to 4 GPUs)")
@@ -524,7 +520,6 @@ if __name__ == '__main__':
     print("Output directory: {}".format(args.output_dir))
     print("pyTorch VERSION:", torch.__version__)
 
-
     ## gpu torch setup ##
     if torch.cuda.is_available():
         gpus = [int(gpu) for gpu in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
@@ -540,15 +535,18 @@ if __name__ == '__main__':
     print("CUDA_VISIBLE_DEVICES: {}".format(gpus))
     print("Active Device is {} (aka torch.cuda.current_device() == {} )".format(device, currdev))
 
-
     ## initializing data ##
     print('Initializing Data...')
     if not args.class_config:
-        nd = NeustonDataset(src=args.src,minimum_images_per_class=args.class_minimum)
+        nd = NeustonDataset(src=args.src, minimum_images_per_class=args.class_minimum)
     else:
         nd = NeustonDataset.from_csv(csv_file=args.class_config[0], column_to_run=args.class_config[1],
                                      src=args.src, minimum_images_per_class=args.class_minimum)
-    ratio1,ratio2 = map(int,args.split.split(':'))
+        # TODO record which classes were grouped and skipped.
+    ratio1, ratio2 = map(int, args.split.split(':'))
+
+    if args.seed is None:
+        args.seed = random.randrange(sys.maxsize)
 
     dataset_tup = nd.split(ratio1, ratio2, seed=args.seed)
     if args.swap:
@@ -562,16 +560,15 @@ if __name__ == '__main__':
     assert ci_eval == ci_train
     if ci_nd:
         msg = '\n{} out of {} classes ignored from --class-minimum {}, PRE-SPLIT'
-        msg = msg.format(len(ci_nd),len(nd.classes+ci_nd),args.class_minimum)
-        ci_nd = ['({:2}) {}'.format(l,c) for c,l in ci_nd]
+        msg = msg.format(len(ci_nd), len(nd.classes+ci_nd), args.class_minimum)
+        ci_nd = ['({:2}) {}'.format(l, c) for c, l in ci_nd]
         print('\n    '.join([msg]+ci_nd))
     if ci_eval:
         msg = '\n{} out of {} classes ignored from --class-minimum {}, POST-SPLIT'
-        msg = msg.format(len(ci_eval),len(evaluation_dataset.classes+ci_eval),args.class_minimum)
-        ci_eval = ['({:2}) {}'.format(l,c) for c,l in ci_eval]
+        msg = msg.format(len(ci_eval), len(evaluation_dataset.classes+ci_eval), args.class_minimum)
+        ci_eval = ['({:2}) {}'.format(l, c) for c, l in ci_eval]
         print('\n    '.join([msg]+ci_eval))
     print()
-
 
     ## TESTING SEED ##
     #images = training_dataset.images + evaluation_dataset.images
@@ -582,7 +579,7 @@ if __name__ == '__main__':
     ## END TESTING SEED ##
 
     # Transforms and augmentation #
-    pixels = [299,299] if args.model=='inception_v3' else [224,224]
+    pixels = [299, 299] if args.model == 'inception_v3' else [224, 224]
     base_tforms = [transforms.Resize(pixels),
                    transforms.ToTensor()]
 
@@ -611,7 +608,6 @@ if __name__ == '__main__':
     training_dataset.transforms = train_tforms
     evaluation_dataset.transforms = eval_tforms
 
-
     # create dataloaders
     print('Loading Training Dataloader...')
     training_loader = torch.utils.data.DataLoader(training_dataset, pin_memory=True, shuffle=True,
@@ -623,7 +619,6 @@ if __name__ == '__main__':
     # number of classes
     assert training_loader.dataset.classes == evaluation_loader.dataset.classes
     num_o_classes = len(training_loader.dataset.classes)
-
 
     ## initializing model  ##
     # options:
@@ -661,15 +656,34 @@ if __name__ == '__main__':
         model = nn.DataParallel(model, device_ids=list(range(len(gpus))))
     model.to(device)  # sends model to GPU
 
-    # optimizer
-    optimizer = optim.Adam( filter(lambda p: p.requires_grad, model.parameters()), lr=args.learning_rate )
+    # optimizerx & loss function criterion
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.learning_rate)
     criterion = nn.CrossEntropyLoss
+    if args.no_normalize:
+        weights = None
+    else:
+        # "nd" is the unsplit original NeustonDataset
+        perclass_count = {class_label: len(imgs) for class_label, imgs in nd.images_perclass.items()}
+        const = len(nd.imgs)/len(perclass_count)
+        weights = [const/count for count in perclass_count.values()]
+        print('\nCLASS: WEIGHT [count]')
+        print('Weight = ( total_image_count / number_of_classes ) /count_perclass')
+        print('       = ( {} / {} )/count = ~{:.0f}/count'.format(len(training_loader.dataset.imgs), len(perclass_count), const))
+        [print('{:>30}: {: 5.2f} [{}]'.format(c, w, n)) for c, n, w in
+         zip(perclass_count.keys(), perclass_count.values(), weights)]
+        print()
+        weights = torch.FloatTensor(weights).to(device)
+
+    try:
+        criterion = criterion(weight=weights).to(device)
+    except TypeError:
+        criterion = criterion().to(device)
 
     print("Model: {}".format(model.__class__))
     print("Transformations: {}".format(train_tforms))
-    print("Epochs: {}-{}, Batch size: {}".format(args.min_epochs,args.max_epochs, args.batch_size))
+    print("Epochs: {}-{}, Batch size: {}".format(args.min_epochs, args.max_epochs, args.batch_size))
 
     training_loop(model, training_loader, evaluation_loader, device, args.output_dir, optimizer, criterion,
-                  normalize_weights=args.no_normalize, max_epochs=args.max_epochs, min_epochs=args.min_epochs, cli_args=vars(args))
+                  weights=weights, max_epochs=args.max_epochs, min_epochs=args.min_epochs, cli_args=vars(args))
 
 
