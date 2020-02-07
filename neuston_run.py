@@ -17,6 +17,9 @@ from torch.utils.data import Dataset, DataLoader
 
 # 3rd Party Imports
 import ifcb
+from ifcb.data.adc import SCHEMA_VERSION_1
+from ifcb.data.stitching import InfilledImages
+
 import numpy as np
 import pandas as pd
 
@@ -243,7 +246,6 @@ try:
 except ImportError:
     IfcbImageDataset = None
 
-
 class IfcbBinDataset(Dataset):
     def __init__(self, bin, resize):
         self.bin = bin
@@ -255,7 +257,13 @@ class IfcbBinDataset(Dataset):
             resize = (resize, resize)
         self.resize = resize
 
-        for target_number, img in bin.images.items():
+        # old-style bins need to be stitched and infilled
+        if bin.schema == SCHEMA_VERSION_1:
+            bin_images = InfilledImages(bin)
+        else:
+            bin_images = bin.images
+
+        for target_number, img in bin_images.items():
             target_pid = bin.pid.with_target(target_number)
             self.images.append(img)
             self.pids.append(target_pid)
