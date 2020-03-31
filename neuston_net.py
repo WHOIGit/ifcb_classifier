@@ -486,7 +486,7 @@ if __name__ == '__main__':
                         help="specifying a seed value allows reproducability when randomizing images for training and evaluation")
     parser.add_argument("--swap", "--swap-datasets-around", action='store_true',
                         help="swap training and evaluation datasets with each other. Useful for 50:50 dupe runs.")
-    parser.add_argument("--class-minimum", type=int, default=1,
+    parser.add_argument("--class-minimum", type=int, default=2,
                         help='the minimum viable number of images per class. Classes with fewer pre-split instances than this value will not be included.')
     #TODO any if either dataset must drop a class, both datasets drop the class.
     #TODO Can be specified pre-SPLIT (single number) and post-SPLIT (colon-deliminated). eg "10" and "8:2" would be equivalent if SPLIT==80:20,
@@ -495,8 +495,8 @@ if __name__ == '__main__':
                         help="select a model architecture to train (default to inceptin_v3)")
     parser.add_argument("--pretrained", default=False, action='store_true',
                         help='Preloads model with weights trained on imagenet')
-    parser.add_argument("--no-normalize", default=False, action='store_true',
-                        help='if included, classes will NOT be weighted during training. Classes with fewer instances will not train as well')
+    parser.add_argument("--wn", default=False, action='store_true',
+                        help='if included, classes will be weight-normalized during training. This may boost classes with fewer instances.')
     parser.add_argument("--max-epochs", default=60, type=int,
                         help="Maximum Number of Epochs (default 60).\nTraining may end before <max-epochs> if evaluation loss doesn't improve beyond best_epoch*1.33")
     parser.add_argument("--min-epochs", default=16, type=int,
@@ -659,9 +659,7 @@ if __name__ == '__main__':
     # optimizerx & loss function criterion
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.learning_rate)
     criterion = nn.CrossEntropyLoss
-    if args.no_normalize:
-        weights = None
-    else:
+    if args.wn: # weight normalization
         # "nd" is the unsplit original NeustonDataset
         perclass_count = {class_label: len(imgs) for class_label, imgs in nd.images_perclass.items()}
         const = len(nd.imgs)/len(perclass_count)
@@ -673,6 +671,8 @@ if __name__ == '__main__':
          zip(perclass_count.keys(), perclass_count.values(), weights)]
         print()
         weights = torch.FloatTensor(weights).to(device)
+    else:
+        weights = None
 
     try:
         criterion = criterion(weight=weights).to(device)

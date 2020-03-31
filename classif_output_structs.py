@@ -16,7 +16,7 @@ class Epoch:
 
         :param epoch_dict: epoch reults dict or filepath thereto. Must contain keys:
             true_inputs,true images, prediction_outputs, epoch, classes, eval_loss, training_loss,
-            secs_elapsed, name, output_dir, model, training_dir, evaluation_dir, pretrained,no_normalize,
+            secs_elapsed, name, output_dir, model, training_dir, evaluation_dir, pretrained, wn,
             min_epochs,max_epochs,batch_size,loaders,augment,learning_rate
         """
 
@@ -52,7 +52,7 @@ class Epoch:
         # Series/Input metadata
         self.model          = epoch_dict['model']
         self.pretrained     = epoch_dict['pretrained']
-        self.normalized     = not epoch_dict['no_normalize']
+        self.normalized     = epoch_dict['wn'] # weight normalization
         self.min_epochs     = epoch_dict['min_epochs']
         self.max_epochs     = epoch_dict['max_epochs']
         self.batch_size     = epoch_dict['batch_size']
@@ -135,7 +135,7 @@ class Epoch:
             input_metadata[a] = self.__getattr__(a)
         return input_metadata
     def get_series_metadata(self):
-        """Returns dict of training-input parameters: at the Series level; classes,model,root,pretrained,no_normalize,min_epochs,max_epochs,batch_size,loaders,augment,learning_rate"""
+        """Returns dict of training-input parameters: at the Series level; classes,model,root,pretrained,wn,min_epochs,max_epochs,batch_size,loaders,augment,learning_rate"""
         series_metadata = {}
         for a in Series.metadata_attribs:
             series_metadata[a] = self.__getattr__(a)
@@ -482,7 +482,7 @@ class Series:
         self.name = os.path.basename(series_dir)
 
         runs_or_epochs = []
-        subdirs = [os.path.join(series_dir, subdir) for subdir in os.listdir(series_dir)]
+        subdirs = [os.path.join(series_dir, subdir) for subdir in os.listdir(series_dir) if os.path.isdir(os.path.join(series_dir, subdir))]
         for subdir in subdirs:
             if os.path.isdir(subdir):
                 if best_epochs_only:
@@ -523,7 +523,7 @@ class Series:
         elif input_stats == 'all':
             stats = 'accuracy f1_weighted f1_macro recall_weighted recall_macro precision_weighted precision_macro'.split()
         else:
-            stats = input_stats
+            stats = reversed(input_stats)
 
         stat_dict = {stat: [getattr(be, stat) for be in self.best_epochs] for stat in stats}
 
@@ -632,7 +632,7 @@ class Collection:
         for src in self.srcs:
             series = Series(src, best_epochs_only=best_epochs_only, ignore_metadata=ignore_series_metadata)
             if self.collection:
-                assert len(series) == len(self.collection[-1])
+                assert len(series) == len(self.collection[-1]), '{} has length {}'.format(series.name, len(series))
                 if same_classes: assert series.classes == self.collection[-1].classes
             self.collection.append( series )
 
