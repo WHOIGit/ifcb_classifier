@@ -9,7 +9,7 @@
 #SBATCH --mail-user=username@whoi.edu
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-9
+#SBATCH --array=1-3
 #SBATCH --output=slurm-logs/%A_%a.%x.out
 
 # SETTING OPERATIVE DIRECTORY #
@@ -25,9 +25,28 @@ module load anaconda
 source activate ifcb
 echo "Environment... Loaded"
 
-# PARAMS #
+# SET PARAMS BASED ON ARRAY ID #
+case $SLURM_ARRAY_TASK_ID in
+
+  1)
+    MODEL=alexnet
+    ;;
+
+  2)
+    MODEL=squeezenet
+    ;;
+
+  3)
+    MODEL=vgg11_bn
+    ;;
+
+  *)
+    echo "BAD CASE-STATE"
+    ;;
+esac
+
+# STATIC PARAMS #
 DATASET=training-data/ExampleTrainingData
-MODEL=inception_v3
 OUTDIR=training-output/TrainedExample_Array/Example_0"$SLURM_ARRAY_TASK_ID"
 mkdir -vp "$OUTDIR"
 

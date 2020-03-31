@@ -11,24 +11,27 @@
 #SBATCH --gres=gpu:1
 #SBATCH --output=slurm-logs/%j.%x.out
 
+# SETTING OPERATIVE DIRECTORY #
+cd /vortexfs1/scratch/username/ifcb
+
+# LOGGING JOB DETAILS #
 echo "Job ID: $SLURM_JOB_ID, JobName: $SLURM_JOB_NAME"
 hostname; pwd; date
 
-cd /vortexfs1/scratch/username/ifcb
-
+# SETTING UP ENVIRONMENT #
 module load cuda91/toolkit cuda91/blas cuda91/cudnn cuda91/fft
 module load anaconda
 source activate ifcb
-
 echo "Environment... Loaded"
 
-## PARAMS ##
+# PARAMS #
 MODEL=training-output/TrainedExample/model.pt
 DATASET=run-data/ExampleDataset
 OUTDIR=run-output/"$SLURM_JOB_NAME"
 mkdir -vp "$OUTDIR"
 
-time python ./neuston_run.py "$DATASET" --model "$MODEL" --outdir "$OUTDIR"
+# RUN SCRIPT #
+time python neuston_run.py "$DATASET" --model "$MODEL" --outdir "$OUTDIR"
 
 # This keeps a number of default parameters at their default values, such as
 # --input-type bins

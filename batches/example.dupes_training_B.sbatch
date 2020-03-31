@@ -12,23 +12,27 @@
 #SBATCH --array=0-9
 #SBATCH --output=slurm-logs/%A_%a.%x.out
 
+# SETTING OPERATIVE DIRECTORY #
 cd /vortexfs1/scratch/username/ifcb
 
+# LOGGING JOB DETAILS #
 echo "Job ID: $SLURM_JOB_ID, JobName-ArrayID: $SLURM_JOB_NAME $SLURM_ARRAY_TASK_ID"
 hostname; pwd; date
 
+# SETTING UP ENVIRONMENT #
 module load cuda91/toolkit cuda91/blas cuda91/cudnn cuda91/fft
 module load anaconda
 source activate ifcb
-
 echo "Environment... Loaded"
 
-## PARAMS ##
-DATASET=training-data/ExampleDataset
+# PARAMS #
 OUTDIR=training-output/ExampleDupes/ExampleDupes_B_0"$SLURM_ARRAY_TASK_ID"
-
+MODEL=inception_v3
+DATASET=training-data/ExampleDataset
 mkdir -vp "$OUTDIR"
-time ./neuston_net.py "$DATASET" "$OUTDIR" --split 50:50 --seed 5050 --swap --model inception_v3 --pretrained --augment flipxy
+
+# RUN SCRIPT #
+time ./neuston_net.py "$DATASET" "$OUTDIR" --split 50:50 --seed 5050 --swap --model $MODEL --pretrained --augment flipxy
 
 # to further configure the combining/skipping of certain classes, use
 # --class-config path/to/ExampleDataset-classlist-config.csv your-configuration
