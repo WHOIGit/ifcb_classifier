@@ -9,7 +9,7 @@
 #SBATCH --mail-user=username@whoi.edu
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --output=slurm-logs/%A_%a.%x.out
+#SBATCH --output=slurm-logs/%j.%x.out
 
 cd /vortexfs1/scratch/username/ifcb
 
