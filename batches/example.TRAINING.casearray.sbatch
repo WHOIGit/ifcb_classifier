@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-#SBATCH --job-name=ArrayTRAIN_Example
+#SBATCH --job-name=CaseArrayTRAIN_Example
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=10240
@@ -47,7 +47,7 @@ esac
 
 # STATIC PARAMS #
 DATASET=training-data/ExampleTrainingData
-OUTDIR=training-output/TrainedExample_Array/Example_0"$SLURM_ARRAY_TASK_ID"
+OUTDIR=training-output/TrainedExample_CaseArray/Example_"$MODEL"
 mkdir -vp "$OUTDIR"
 
 # RUN SCRIPT #
