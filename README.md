@@ -5,86 +5,114 @@ This repo host an image classifying program designed to be trained on plankton i
 
 # OUTLINE
 
-**data_recomb.py** - a utility tool to copy an whole data set into training and evaluation datasets
-
 **neuston_net.py** - Image classification neural net model trainer
 
 **neuston_run.py** - Processes images using model produced by neuson_net
 
 **plotutil.py** - module to assist with in-training plotting functions
 
-**classif_output_structs.py** - module to help parse, process, plot the output of iterative neuston_net results
+**classif_output_structs.py** - module to help parse, process, plot the output of iterative neuston_net results 
 
-**data_reviewing.ipynb** - Jupyter Notebook harnessing classif_output_structs to produce result analysis
 
-**transcribe_dupes.ipynb** - Notebook for copying chronicaly misclassified images to a new directory structure for reviewing.
+# INSTALLATION (on WHOI HPC)
+
+Installation and Setup on HPC
+All installation commands are to be run from a terminal.
+`<username>` refers to you whoi username and password
+`<ifcb-dirname>` refers to the directory you choose to install into. “ifcb” is fine
+`<ifcb-envname>` refers to the environment name you choose to install into. “ifcb” is fine
+
+0. `ssh <username>@poseidon.whoi.edu`
+0. `cd $SCRATCH`
+0. `git clone https://github.com/WHOIGit/ifcb_classifier.git <ifcb-dirname>`
+0. `git clone https://github.com/joefutrelle/pyifcb.git <ifcb-dirname>/pyifcb`
+0. `cd <ifcb-dirname>`
+0. `mkdir training-data training-output run-data run-output slurm-logs`
+0. `conda create -n <ifcb-envname> python=3.7`
+    * If you get “conda: command not found”, the anaconda hpc Module may not be loaded. Do `module load anaconda` and try again.
+     * Make sure you also have cuda modules loaded:
+`module load cuda91/toolkit cuda91/blas cuda91/cudnn cuda91/fft`
+    * You can ensure modules load when you login with `module initadd <themodule>`
+0. `conda activate <ifcb-envname>`
+    * If you get prompted with “`conda init <SHELL_NAME>`” select “`bash`” for your shell-name. You will have to log out of poseidon (`exit`), log back in, and navigate back to this install directory.
+0. `conda install pytorch=1.1 torchvision cudatoolkit=9.0 -c pytorch`
+    * there are more recent versions of pytorch and cuda, but these are the ones that the hpc has cuda-version modules for.
+0. `conda install scikit-learn matplotlib h5py scipy pandas requests scikit-image Pillow=6.1`
+0. `pip install rectpack pysmb`
+0. `(cd pyifcb; python setup.py install)`
+0. DONE! Your installation is ready to go. You can test that things were installed correctly by doing `python neuston_net.py --help` and `python neuston_run.py --help`. The help screen/documentation for these scripts should appear.
+0. You should optionally run the following command to bulk edit the example sbatch scripts to use your username. Replace YOURUSERNAME with your username.
+    * `sed -i 's/username/YOURUSERNAME/g' batches/templates/example*`
  
 
-# INSTALLATION
 
-Requirement .req files were made with conda.
+# USAGE
 
-ifcb.req contains everything needed to run neuston_net and neuston_run.
+Neuston Net and Neuston Run are the two main programs. They are for training and running models for plankton classification, respectively. 
+Although the files under `batches/templates` are indended for use with the WHOI HPC's Slurm sbatch program, they describe typical usage well too.
 
-dataproc.req contains everything needed for classif_output_structs and Notebooks. 
+## Neuston Net (Model Training)
+Created Model will be saved under `OUTDIR` as `model.pt`
+```sh
+conda activate ifcb
 
-Conflicting dependencies made it such that these had to be separate. 
+## PARAMS ##
+DATASET=training-data/ExampleTrainingData
+OUTDIR=training-output/ExampleTrainingResults
+mkdir -vp "$OUTDIR"
 
+python ./neuston_net.py "$DATASET" "$OUTDIR" --split 80:20 --model inception_v3 
 
-# USEAGE
+```
 
-The main training program is neuston_net.py which has a convinient CLI interface.
+Additional useful flag for neuson_net:
+```sh
+## Flags to perhaps improve learning ##
+# --pretrained   - start of the model architecture with weights based off of the model as trained on imagenet
+# --augment      - augment the data to improve generalization
+#                - eg: --augment flipxy training-only
+# --wn           - perclass loss weight normalization 
+
+## further configure what classes from DATASET to include/exclude/combine ##
+# --class-config path/to/ExampleDataset-classlist-config.csv <column-header>
+# --class-minimum N
+
+## Additional flags and their default values ##
+# --min-epochs 16
+# --max-epochs 60
+# --batch-size 108
+# --loaders 4
+
+## View the full list ##
+# --help
+
+```
+## Neuston Run (Model Running)
 
 ```sh
-$> ./neuston_net.py -h
-usage: neuston_net.py [-h]
-                      [--model {inception_v3,alexnet,squeezenet,vgg*,vgg*_bn,resnet*,,densenet*}]
-                      [--pretrained] [--no-normalize]
-                      [--max-epochs MAX_EPOCHS] [--min-epochs MIN_EPOCHS]
-                      [--batch-size BATCH_SIZE] [--loaders LOADERS]
-                      [--augment {flipx,flipy,flipxy,training-only,nochance} [...]]
-                      [--learning-rate LEARNING_RATE]
-                      training_dir evaluation_dir output_dir
+conda activate ifcb
 
-positional arguments:
-  training_dir          path to training set images
-  evaluation_dir        path to testing set images
-  output_dir            directory out output logs and saved model
+## PARAMS ##
+MODEL=training-output/TrainedExample/model.pt
+DATASET=run-data/ExampleDataset
+OUTDIR=run-output/ExampleRunResults
+mkdir -vp "$OUTDIR"
 
-optional arguments:
-  -h, --help            show this help message and exit
-  --model MODEL         select a model architecture to train. Options are:
-                        {inception_v3,alexnet,squeezenet,vgg11,vgg11_bn,
-                        vgg13,vgg13_bn,vgg16,vgg16_bn,vgg19,vgg19_bn,
-                        resnet18,resnet34,resnet50,resnet101,resnet151,
-                        densenet121,densenet169,densenet161,densenet201}
-                        Default is inception_v3.
-  --pretrained          Preloads model with weights trained on imagenet
-  --no-normalize        If included, classes will NOT will be weighted during
-                        training. Classes with fewer instances will not train
-                        as well.
-  --max-epochs EPOCHS   Maximum Number of Epochs. Training may
-                        end before <max-epochs> if evaluation loss doesn't
-                        improve beyond best_epoch*1.33. Default is 100.
-  --min-epochs EPOCHS   Minimum number of epochs to run. Default is 10
-  --batch-size SIZE     how many images to process in a batch. Default is 108, a
-                        number divisible by 1,2,3,4 to ensure even batch
-                        distribution across up to 4 GPUs.
-  --loaders LOADERS     total number of threads to use for loading data
-                        to/from GPUs. 4 per GPU is good. Default is 4 total.
-  --augment AUG [AUG ...]
-                        Data augmentation can improve training. Listed
-                        transformations -may- be applied to any given input
-                        image when loaded. Options are: {flipx,flipy,flipxy, 
-                        training-only,nochance}. To deterministically apply
-                        transformations to all input images while also
-                        retaining non-transformed images, use "nochance".
-                        flipx and flipy denotes mirroring the image vertically
-                        and horizontally respectively. If "training-only" is
-                        included, augmentation transformations will only be
-                        applied to the training set.
-  --learning-rate RATE, --lr RATE
-                        The (initial) learning rate of the training optimizer
-                        (Adam). Default is 0.001
+python ./neuston_run.py "$DATASET" --model "$MODEL" --outdir "$OUTDIR"
+
 ```
+Additional flags for neuson_run:
+```sh
+## Defaults ##
+# --input-type bins
+# --outfile {bin}_class_v2.h5
+# --batch-size 108
+# --loaders 4
+
+## Configure bin input ##
+# --bin-filter path/to/your-list-of-bins.txt
+# where "your-list-of-bins.txt" has one bin-id per line. eg: "IFCB5_2017_338_173613"
+```
+
+
 
