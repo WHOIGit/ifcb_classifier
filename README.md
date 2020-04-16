@@ -22,12 +22,12 @@ All installation commands are to be run from a terminal.
 `<ifcb-dirname>` refers to the directory you choose to install into. “ifcb” is fine
 `<ifcb-envname>` refers to the environment name you choose to install into. “ifcb” is fine
 
-0. `ssh <username>@poseidon.whoi.edu`
+1. `ssh <username>@poseidon.whoi.edu`
 0. `cd $SCRATCH`
 0. `git clone https://github.com/WHOIGit/ifcb_classifier.git <ifcb-dirname>`
 0. `git clone https://github.com/joefutrelle/pyifcb.git <ifcb-dirname>/pyifcb`
 0. `cd <ifcb-dirname>`
-0. `mkdir training-data training-output run-data run-output slurm-logs`
+0. `mkdir slurm-logs`
 0. `conda create -n <ifcb-envname> python=3.7`
     * If you get “conda: command not found”, the anaconda hpc Module may not be loaded. Do `module load anaconda` and try again.
      * Make sure you also have cuda modules loaded:
