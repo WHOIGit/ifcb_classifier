@@ -107,6 +107,9 @@ class NeustonDataset(Dataset):
             #1) determine output lengths
             d1_len = int(ratio1*len(images)/100+0.5)
             d2_len = len(images)-d1_len  # not strictly needed
+            if d1_len == len(images) and self.minimum_images_per_class>1:
+            # make sure that at least one image gets put in d2
+                d1_len -= 1 
 
             #2) split images as per distribution
             if seed:
@@ -121,8 +124,8 @@ class NeustonDataset(Dataset):
 
         #4) calculate minimum_images_per_class for thresholding
         if minimum_images_per_class == 'scale':
-            d1_threshold = int(self.minimum_images_per_class*ratio1/100+0.5)
-            d2_threshold = self.minimum_images_per_class-d1_threshold
+            d1_threshold = int(self.minimum_images_per_class*ratio1/100+0.5) or 1
+            d2_threshold = self.minimum_images_per_class-d1_threshold or 1
         elif isinstance(minimum_images_per_class,int):
             d1_threshold = d2_threshold = minimum_images_per_class
         else:
