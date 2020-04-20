@@ -284,28 +284,27 @@ if __name__ == '__main__':
     print("pyTorch VERSION:", torch.__version__)
     parser = argparse.ArgumentParser()
     parser.add_argument('src', nargs='+',
-                        help='single file or directory featuring one or more input images or bins. Searches directories recursively.')
+        help='single file or directory featuring one or more input images or bins. Searches directories recursively.')
     parser.add_argument('--model', required=True,
-                        help='path to the trained ifcb classifier model')
+        help='path to the trained ifcb classifier model')
     parser.add_argument('--input-type', default='bins', choices=['bins', 'pngs', 'list', 'eval'],
-                        help='Parse *.png images or *.bin bins. Default is "bins"')
+        help='Parse *.png images or *.bin bins. Default is "bins"')
     parser.add_argument("--outdir", default='.',
-                        help='directory results will be saved to')
+        help='directory results will be saved to')
     parser.add_argument("--outfile", default="{bin}_class_v2.h5", help=
     'If "{bin}" or "{dir}" is in --outfile, results are written to files on a per-bin basis where "{bin}" is replaced with the Bin ID or {dir} with the subdirectory containing image files'
     'If --outfile is "stdout", results are output to the terminal in csv format.'
     'If --outfile fan have a few different file-types. Names ending with .h5/.hdf, .csv, and .mat are recognized.')
-    parser.add_argument("bin-filter", help="path to a file containing a bin's ID on each line. Bins from SRC dir not found in this list will be skipped. Only valid when INPUT-TYPE is 'bins'")
-
-    #    parser.add_argument("--noranks", default=False, action='store_true',
-    #                        help="if included, per-class ranks will not be featured in the output file")
+    parser.add_argument("--bin-filter", default=None,
+        help="path to a file containing a bin's ID on each line. Bins from SRC dir not found in this list will be skipped. Only valid when INPUT-TYPE is 'bins'")
     parser.add_argument("--batch-size", default=108, type=int, dest='batch_size',
-                        help="how many images to process in a batch, (default 108, a number divisible by 1,2,3,4 to ensure even batch distribution across up to 4 GPUs)")
+        help="how many images to process in a batch, (default 108, a number divisible by 1,2,3,4 to ensure even batch distribution across up to 4 GPUs)")
     parser.add_argument("--loaders", default=4, type=int,
-                        help='total number of threads to use for loading data to/from GPUs. 4 per GPU is good. (Default 4 total)')
+        help='total number of threads to use for loading data to/from GPUs. 4 per GPU is good. (Default 4 total)')
     parser.add_argument('--eval-compare', action='store_true',
-                        help='if invoked, will load the best_epoch.dict from the same directory as the model and compare the classification outputs!')
-
+        help='if invoked, will load the best_epoch.dict from the same directory as the model and compare the classification outputs!')
+    #parser.add_argument("--noranks", default=False, action='store_true',
+    #    help="if included, per-class ranks will not be featured in the output file")
     args = parser.parse_args()
 
     # torch gpu  setup
@@ -340,7 +339,7 @@ if __name__ == '__main__':
                 assert '{bin}' in args.outfile
                 dd = ifcb.DataDirectory(src)
                 num_of_bins = len(dd)
-                if args['bin_filter']:
+                if args.bin_filter:
                     with open(args.bin_filter) as f:
                         args.bin_filter = [line.strip() for line in f]
                 for i, bin in enumerate(dd):
