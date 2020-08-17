@@ -360,6 +360,7 @@ def training_loop(model, training_loader, eval_loader, device, savepath, optimiz
             torch.save({'state_dict': model.state_dict(),
                         'classes':    classes,
                         'type':       cli_args['model'],
+                        'args':       cli_args,
                         'version':    {'torch':       torch.__version__,
                                        'torchvision': torchvision.__version__}
                         },
@@ -522,6 +523,7 @@ if __name__ == '__main__':
         os.makedirs(args.output_dir)
     print("Output directory: {}".format(args.output_dir))
     print("pyTorch VERSION:", torch.__version__)
+    print("CUDA Version: {}".format(torch.version.cuda))
 
     ## gpu torch setup ##
     if torch.cuda.is_available():
@@ -536,7 +538,7 @@ if __name__ == '__main__':
         device = torch.device("cpu")
         currdev = None
     print("CUDA_VISIBLE_DEVICES: {}".format(gpus))
-    print("Active Device is {} (aka torch.cuda.current_device() == {} )".format(device, currdev))
+    #print("Active Device is {} (aka torch.cuda.current_device() == {} )".format(device, currdev))
 
     ## initializing data ##
     print('Initializing Data...')

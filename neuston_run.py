@@ -17,6 +17,7 @@ from torch.utils.data import Dataset, DataLoader
 
 # 3rd Party Imports
 import ifcb
+from ifcb.data.files import Fileset
 from ifcb.data.adc import SCHEMA_VERSION_1
 from ifcb.data.stitching import InfilledImages
 
@@ -284,19 +285,19 @@ if __name__ == '__main__':
     print("pyTorch VERSION:", torch.__version__)
     parser = argparse.ArgumentParser()
     parser.add_argument('src', nargs='+',
-        help='single file or directory featuring one or more input images or bins. Searches directories recursively.')
+        help='file(s) or directory(s). specifying bins or images. Directories are accessed recursively.')
     parser.add_argument('--model', required=True,
         help='path to the trained ifcb classifier model')
-    parser.add_argument('--input-type', default='bins', choices=['bins', 'pngs', 'list', 'eval'],
-        help='Parse *.png images or *.bin bins. Default is "bins"')
-    parser.add_argument("--outdir", default='.',
+    parser.add_argument('--input-type', default='bins', choices=['bins', 'imgs', 'list', 'eval','symbins'],
+        help="Specifies different input types. If 'bins' (default), SRC must be a directory. If 'symbins', SRC must be a directory (and --filter-bins must be specified). If 'imgs', SRC must be a path(s) of image file(s). If 'list', SRC must be a line-deliminated list of image paths.")
+    parser.add_argument("--outdir", required=True,
         help='directory results will be saved to')
     parser.add_argument("--outfile", default="{bin}_class_v2.h5", help=
     'If "{bin}" or "{dir}" is in --outfile, results are written to files on a per-bin basis where "{bin}" is replaced with the Bin ID or {dir} with the subdirectory containing image files'
     'If --outfile is "stdout", results are output to the terminal in csv format.'
     'If --outfile fan have a few different file-types. Names ending with .h5/.hdf, .csv, and .mat are recognized.')
     parser.add_argument("--bin-filter", default=None,
-        help="path to a file containing a bin's ID on each line. Bins from SRC dir not found in this list will be skipped. Only valid when INPUT-TYPE is 'bins'")
+        help="path to a file containing a list of bin ID's (newline-deliminated). Bins from SRC dir not found in this list will be skipped. Only valid when INPUT-TYPE is 'bins' or 'symbins'. For INPUT-TYPE 'bins', just the bin id is sufficient. For INPUT-TYPE 'symbins', each line must be a path that starts with SRC; ie: SRC/path/to/bin_id " )
     parser.add_argument("--batch-size", default=108, type=int, dest='batch_size',
         help="how many images to process in a batch, (default 108, a number divisible by 1,2,3,4 to ensure even batch distribution across up to 4 GPUs)")
     parser.add_argument("--loaders", default=4, type=int,
@@ -317,6 +318,7 @@ if __name__ == '__main__':
     else:
         gpus = []
         device = torch.device("cpu")
+    print("CUDA Version: {}".format(torch.version.cuda))
     print("CUDA_VISIBLE_DEVICES: {}".format(gpus))
 
     ## loading model
@@ -335,17 +337,28 @@ if __name__ == '__main__':
     ## ingesting input
     if all([os.path.isdir(src) for src in args.src]):
         for src in args.src:
-            if args.input_type == 'bins':
-                assert '{bin}' in args.outfile
-                dd = ifcb.DataDirectory(src)
-                num_of_bins = len(dd)
+            if args.input_type in ['bins','symbins']:
+
                 if args.bin_filter:
                     with open(args.bin_filter) as f:
                         args.bin_filter = [line.strip() for line in f]
+
+                assert '{bin}' in args.outfile
+                if args.input == 'symbins':
+                    assert args.bin_filter
+                    dd = [bin_path_id for bin_path_id in args.bin_filter if bin_path_id.startswith(src)]
+                    dd = [Fileset(bin_path_id) for bin_path_id in dd]
+                    dd = [fset.as_bin() for fset in dd if fset.exists()]
+                else: # args.input == bins
+                    if args.bin_filter:
+                        bin_filter_list = [os.path.basename(x) for x in args.bin_filter]
+                        bin_filter = lambda fs: fs.pid in bin_filter_list
+                        dd = ifcb.DataDirectory(src,filter=bin_filter)
+                    else:
+                        dd = ifcb.DataDirectory(src)
+
+                num_of_bins = len(dd)
                 for i, bin in enumerate(dd):
-                    bin_id = os.path.basename(str(bin))
-                    if args.bin_filter and bin_id not in args.bin_filter:
-                        continue
                     bin_dataset = IfcbBinDataset(bin, resize)
                     image_loader = DataLoader(bin_dataset, batch_size=args.batch_size,
                                               pin_memory=True, num_workers=args.loaders)
@@ -358,8 +371,8 @@ if __name__ == '__main__':
                     results = run_model(model, image_loader, device)
 
                     print()
-                    outfile = os.path.join(args.outdir, args.outfile.format(bin=bin_id))
-                    save_class_scores(outfile, bin_id, results['outputs_allranks'], results['inputs'], classes)
+                    outfile = os.path.join(args.outdir, args.outfile.format(bin=bin.pid))
+                    save_class_scores(outfile, bin.pid, results['outputs_allranks'], results['inputs'], classes)
 
             else:  # directory of images
                 assert '{dir}' in args.outfile
