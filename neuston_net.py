@@ -211,7 +211,7 @@ if __name__ == '__main__':
 
     out = train.add_argument_group(title='Output Options')
     out.add_argument('--model-file', default='model.ptl', help='The file name of the output model. Default is model.ptl')
-    out.add_argument('--epochs-log', help='Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores.')
+    out.add_argument('--epochs-log', default='epochs.csv', help='Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv')
     out.add_argument('--args-log', help='Specify a yaml filename. Includes all user-specified and default training parameters.')
     out.add_argument('--results',  dest='result_files', metavar=('FNAME','SERIES'), nargs='+', action='append', default=[],
                      help='FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats. Default is "results.json". '
