@@ -18,32 +18,23 @@ This repo host an image classifying program designed to be trained on plankton i
 
 Installation and Setup on HPC
 All installation commands are to be run from a terminal.
-`<username>` refers to you whoi username and password
-`<ifcb-dirname>` refers to the directory you choose to install into. “ifcb” is fine
-`<ifcb-envname>` refers to the environment name you choose to install into. “ifcb” is fine
+`<user>` refers to you whoi username and password
+`<DIR>` refers to the directory you choose to install into. “ifcb” is fine
 
-1. `ssh <username>@poseidon.whoi.edu`
+1. `ssh <user>@poseidon.whoi.edu`
 0. `cd $SCRATCH`
-0. `git clone https://github.com/WHOIGit/ifcb_classifier.git <ifcb-dirname>`
-0. `git clone https://github.com/joefutrelle/pyifcb.git <ifcb-dirname>/pyifcb`
-0. `cd <ifcb-dirname>`
-0. `mkdir slurm-logs`
-0. `conda create -n <ifcb-envname> python=3.7`
+0. `git clone https://github.com/WHOIGit/ifcb_classifier.git <DIR>`
+0. `cd <DIR>`
+0. `conda env create -f environment.yaml`
     * If you get “conda: command not found”, the anaconda hpc Module may not be loaded. Do `module load anaconda` and try again.
      * Make sure you also have cuda modules loaded:
-`module load cuda91/toolkit cuda91/blas cuda91/cudnn cuda91/fft`
+`module load cuda10.1/toolkit cuda10.1/cudnn/8 cuda10.1/blas cuda10.1/fft`
     * You can ensure modules load when you login with `module initadd <themodule>`
-0. `conda activate <ifcb-envname>`
-    * If you get prompted with “`conda init <SHELL_NAME>`” select “`bash`” for your shell-name. You will have to log out of poseidon (`exit`), log back in, and navigate back to this install directory.
-0. `conda install pytorch=1.1 torchvision cudatoolkit=9.0 -c pytorch`
-    * there are more recent versions of pytorch and cuda, but these are the ones that the hpc has cuda-version modules for.
-0. `conda install scikit-learn matplotlib h5py scipy pandas requests scikit-image Pillow=6.1`
-0. `pip install rectpack pysmb`
-0. `(cd pyifcb; python setup.py install)`
-0. DONE! Your installation is ready to go. You can test that things were installed correctly by doing `python neuston_net.py --help` and `python neuston_run.py --help`. The help screen/documentation for these scripts should appear.
+0. `conda activate ifcbnn`
+    * If you get prompted with “`conda init <SHELL_NAME>`” select “`bash`” for your shell-name. You will have to log out of poseidon (`exit`), log back in, and navigate back to this DIR install directory.
+0. DONE! Your installation is ready to go. You can test that things were installed correctly by doing `python neuston_net.py --help`. The help screen/documentation should appear.
 0. You should optionally run the following command to bulk edit the example sbatch scripts to use your username. Replace YOURUSERNAME with your username.
     * `sed -i 's/username/YOURUSERNAME/g' batches/templates/example*`
- 
 
 
 # USAGE

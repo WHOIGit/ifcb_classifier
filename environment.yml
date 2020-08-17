@@ -1,0 +1,16 @@
+name: ifcbnn
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+- python>=3.8
+- cudatoolkit=10.1
+- pytorch-lightning=0.8
+- torchvision=0.5
+- scikit-learn
+- pandas
+- numpy
+- h5py
+- pip
+- pip:
+  - git+https://github.com/joefutrelle/pyifcb.git

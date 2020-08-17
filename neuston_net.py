@@ -1,694 +1,258 @@
-#! /usr/bin/env python
-
-## Builtin Imports ##
-import os
-import sys
-import time
-import random
-from ast import literal_eval
-import warnings
-
-## 3rd party library imports ##
-import pandas as pd
-from sklearn import metrics
-
-## TORCH STUFF ##
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-from torchvision import transforms, datasets
-from torch.utils.data.dataset import Dataset
-import torchvision.models as MODEL_MODULE
-import torchvision
-
-## local imports ##
-try: import plotutil  # installation of matplotlib is optional
-except ImportError: plotutil = None
-
-YMD_HMS = "%Y-%m-%d %H:%M:%S"
-warnings.filterwarnings("ignore",
-    category=metrics.classification.UndefinedMetricWarning)
-
-### UTILITIES ###
-
-def training_progressbar(batch: int, batches: int, epoch: int, epochs: int,
-                         batches_per_dot: int = 1, batches_per_summary: int = 70):
-    if batch%batches_per_summary == batches_per_summary-1 or batch == 0:
-        phase_percent_done = 100*batch/batches
-        total_percent_done = 100*(batches*epoch+batch)/(batches*epochs)
-        print('\n[ {:1.1f} %] epoch {:<2} Training {:1.1f}% complete'.format(total_percent_done, epoch+1,
-                                                                             phase_percent_done), end=' ', flush=True)
-    if batch%batches_per_dot == batches_per_dot-1:
-        print('.', end='', flush=True)
-
-
-def testing_progressbar(batch: int, batches: int, batches_per_dot: int = 1, batches_per_summary: int = 85):
-    if batch%batches_per_summary == batches_per_summary-1 or batch == 0:
-        phase_percent_done = 100*batch/batches
-        print('\nVerification {:1.1f}% complete'.format(phase_percent_done), end=' ', flush=True)
-
-    if batch%batches_per_dot == batches_per_dot-1:
-        print('.', end='', flush=True)
-
-
-def ts2secs(ts1, ts2):
-    #_start_time = time.strftime(YMD_HMS)
-    #_elapsed_secs = ts2secs(_start_clock, _train_clock)
-    t2 = time.mktime(time.strptime(ts2, YMD_HMS))
-    t1 = time.mktime(time.strptime(ts1, YMD_HMS))
-    return t2-t1
-
-
-class NeustonDataset(Dataset):
-
-    def __init__(self, src, minimum_images_per_class=1, transforms=None, images_perclass=None):
-        self.src = src
-        if not images_perclass:
-            images_perclass = self.fetch_images_perclass(src)
-
-        self.minimum_images_per_class = max(1, minimum_images_per_class)  # always at least 1.
-        new_images_perclass = {label: images for label, images in images_perclass.items() if
-                               len(images) >= self.minimum_images_per_class}
-        classes_ignored = sorted(set(images_perclass.keys())-set(new_images_perclass.keys()))
-        self.classes_ignored_from_too_few_samples = [(c, len(images_perclass[c])) for c in classes_ignored]
-        self.classes = sorted(new_images_perclass.keys())
-
-        # flatten images_perclass to congruous list of image paths and target id's
-        self.targets, self.images = zip(*((self.classes.index(t), i) for t in new_images_perclass for i in new_images_perclass[t]))
-        self.transforms = transforms
-
-    @staticmethod
-    def fetch_images_perclass(src):
-        """ folders in src are the classes """
-        classes = [d.name for d in os.scandir(src) if d.is_dir()]
-        classes.sort()
-
-        images_perclass = {}
-        for subdir in classes:
-            files = os.listdir(os.path.join(src, subdir))
-            #files = sorted([i for i in files if i.lower().endswith(ext)])
-            files = sorted([f for f in files if os.path.splitext(f)[1] in datasets.folder.IMG_EXTENSIONS])
-            images_perclass[subdir] = [os.path.join(src, subdir, i) for i in files]
-        return images_perclass
-
-    @property
-    def images_perclass(self):
-        ipc = {c: [] for c in self.classes}
-        for img, trg in zip(self.images, self.targets):
-            ipc[self.classes[trg]].append(img)
-        return ipc
-
-    def split(self, ratio1, ratio2, seed=None, minimum_images_per_class='scale'):
-        assert ratio1+ratio2 == 100
-        d1_perclass = {}
-        d2_perclass = {}
-        for class_label, images in self.images_perclass.items():
-            #1) determine output lengths
-            d1_len = int(ratio1*len(images)/100+0.5)
-            d2_len = len(images)-d1_len  # not strictly needed
-            if d1_len == len(images) and self.minimum_images_per_class>1:
-            # make sure that at least one image gets put in d2
-                d1_len -= 1 
-
-            #2) split images as per distribution
-            if seed:
-                random.seed(seed)
-            d1_images = random.sample(images, d1_len)
-            d2_images = sorted(list(set(images)-set(d1_images)))
-            assert len(d1_images)+len(d2_images) == len(images)
-
-            #3) put images into perclass_sets at the right class
-            d1_perclass[class_label] = d1_images
-            d2_perclass[class_label] = d2_images
-
-        #4) calculate minimum_images_per_class for thresholding
-        if minimum_images_per_class == 'scale':
-            d1_threshold = int(self.minimum_images_per_class*ratio1/100+0.5) or 1
-            d2_threshold = self.minimum_images_per_class-d1_threshold or 1
-        elif isinstance(minimum_images_per_class,int):
-            d1_threshold = d2_threshold = minimum_images_per_class
-        else:
-            d1_threshold = d2_threshold = self.minimum_images_per_class
-
-        #5) create and return new datasets
-        dataset1 = NeustonDataset(src=self.src, images_perclass=d1_perclass, transforms=self.transforms, minimum_images_per_class=d1_threshold)
-        dataset2 = NeustonDataset(src=self.src, images_perclass=d2_perclass, transforms=self.transforms, minimum_images_per_class=d2_threshold)
-        assert dataset1.classes == dataset2.classes  # possibly fails due to edge case thresholding?
-        assert len(dataset1)+len(dataset2) == len(self)  # make sure we don't lose any images somewhere
-        return dataset1, dataset2
-
-    @classmethod
-    def from_csv(cls, src, csv_file, column_to_run, transforms=None, minimum_images_per_class=None):
-        #1) load csv
-        df = pd.read_csv(csv_file, header=0)
-        base_list = df.iloc[:,0].tolist()      # first column
-        mod_list = df[column_to_run].tolist()  # chosen column
-
-        #2) get list of files
-        default_images_perclass = cls.fetch_images_perclass(src)
-        missing_classes_src = [c for c in default_images_perclass if c not in base_list]
-
-        #3) for classes in column to run, keep 1's, dump 0's, combine named
-        new_images_perclass = {}
-        missing_classes_csv = []
-        skipped_classes = []
-        grouped_classes = {}
-        for base, mod in zip(base_list, mod_list):
-            if base not in default_images_perclass:
-                missing_classes_csv.append(base)
-                continue
-
-            if str(mod) == '0':  # don't include this class
-                skipped_classes.append(base)
-                continue
-            elif str(mod) == '1':
-                class_label = base  # include this class
-            else:
-                class_label = mod  # rename/group base class as mod
-                if mod not in grouped_classes:
-                    grouped_classes[mod] = [base]
-                else:
-                    grouped_classes[mod].append(base)
-
-            # transcribing images
-            if class_label not in new_images_perclass:
-                new_images_perclass[class_label] = default_images_perclass[base]
-            else:
-                new_images_perclass[class_label].extend(default_images_perclass[base])
-
-        #4) print messages
-        if missing_classes_src:
-            msg = '\n{} of {} classes from src dir {} were NOT FOUND in {}'
-            msg = msg.format(len(missing_classes_src), len(default_images_perclass.keys()), src,
-                             os.path.basename(csv_file))
-            print('\n    '.join([msg]+missing_classes_src))
-
-        if missing_classes_csv:
-            msg = '\n{} of {} classes from {} were NOT FOUND in src dir {}'
-            msg = msg.format(len(missing_classes_csv), len(base_list), os.path.basename(csv_file), src)
-            print('\n    '.join([msg]+missing_classes_csv))
-
-        if grouped_classes:
-            msg = '\n{} GROUPED classes were created, as per {}'
-            msg = msg.format(len(grouped_classes), os.path.basename(csv_file))
-            print(msg)
-            for mod, base_entries in grouped_classes.items():
-                print('  {}'.format(mod))
-                msgs = '     <-- {}'
-                msgs = [msgs.format(c) for c in base_entries]
-                print('\n'.join(msgs))
-
-        if skipped_classes:
-            msg = '\n{} classes were SKIPPED, as per {}'
-            msg = msg.format(len(skipped_classes), os.path.basename(csv_file))
-            print('\n    '.join([msg]+skipped_classes))
-
-        #5) create dataset
-        return cls(src=src, images_perclass=new_images_perclass, transforms=transforms, minimum_images_per_class=minimum_images_per_class)
-
-    def __getitem__(self, index):
-        path = self.images[index]
-        target = self.targets[index]
-        data = datasets.folder.default_loader(path)
-        if self.transforms is not None:
-            data = self.transforms(data)
-        return data, target, path
-
-    def __len__(self):
-        return len(self.images)
-
-    @property
-    def imgs(self):
-        return self.images
-
-
-class ImageFolderWithPaths(datasets.ImageFolder):
-    """
-    Custom dataset that includes image file paths. Extends torchvision.datasets.ImageFolder
-    Example setup:      dataloader = torch.utils.DataLoader(ImageFolderWithPaths("path/to/your/perclass/image/folders"))
-    Example usage:     for inputs,labels,paths in my_dataloader: ....
-    instead of:        for inputs,labels in my_dataloader: ....
-    adapted from: https://gist.github.com/andrewjong/6b02ff237533b3b2c554701fb53d5c4d
-    """
-
-    # override the __getitem__ method. this is the method dataloader calls
-    def __getitem__(self, index):
-        # this is what ImageFolder normally returns
-        data, target = super(ImageFolderWithPaths, self).__getitem__(index)
-        # the image file path
-        path = self.imgs[index][0]
-        # return a new tuple that includes original plus the path
-        return data, target, path
-
-
-def record_epoch_stats(epoch, eval_dict, training_loss, cli_args, name, savepath, filename, secs_elapsed, append=False):
-    save_dict = eval_dict.copy()
-    save_dict['name'] = name
-    save_dict['epoch'] = epoch
-    save_dict['secs_elapsed'] = secs_elapsed
-    save_dict['training_loss'] = training_loss
-    save_dict.update(cli_args)
-
-    fpath = os.path.join(savepath, filename)
-    #print('writing to', fpath, '... ', end='')
-
-    if append:
-        # TODO CHANGE from reading in and rewriting previous file to inserting ",{save_dict}" at the nth-1 character position of the file (ie right before the closing ] )
-        # read content of existing file if available
-        try:
-            with open(fpath, 'r') as f:
-                epoch_records = literal_eval(f.read())
-        except FileNotFoundError:
-            epoch_records = []
-
-        # append per-epoch info into dict
-        epoch_records.append(save_dict)
-
-        # overwrite-save  records
-        with open(fpath, 'w') as f:
-            print(epoch_records, file=f)
-
-    else:
-        with open(fpath, 'w') as f:
-            print(save_dict, file=f)
-
-
-## TRAINING AND VALIDATING ##
-
-def training_loop(model, training_loader, eval_loader, device, savepath, optimizer, criterion,
-                  weights=None, max_epochs=100, min_epochs=10, epoch0=0, best_loss=float('inf'), cli_args={}):
-    run_name = os.path.basename(savepath)
-    num_o_batches = len(training_loader)
-    best_epoch = epoch0
-    best_f1 = 0
-    loss_record = []  # with one train-eval loss tuple per epoch
-
-    print('Training... there are {} batches per epoch'.format(num_o_batches))
-    #print('Starting at epoch {} of max {}'.format(epoch0+1, max_epochs))
-
-    # start training loop
-    training_startime = time.strftime(YMD_HMS)
-    for epoch in range(epoch0+1, max_epochs+1):
-        model.train()
-        epoch_startime = time.strftime(YMD_HMS)
-        epoch_loss = 0
-
-        #Process data batch
-        for i, data in enumerate(training_loader):
-            # send data to gpu(s)
-            inputs, labels, _ = data  # _ is for paths, not needed for training
-            inputs, labels = inputs.to(device), labels.to(device)
-
-            # zero the parameter gradients
-            optimizer.zero_grad()
-
-            # run model and determine loss
-            outputs = model(inputs)  #training-loop
-            try:
-                outputs = outputs.to(device)
-                batch_loss = criterion(outputs, labels)
-            except AttributeError:  # e="'tuple' object has no attribute 'to'" when inception_v3 aux_logits=True
-                outputs, aux_outputs = outputs
-                outputs, aux_outputs = outputs.to(device), aux_outputs.to(device)
-                loss1 = criterion(outputs, labels)
-                loss2 = criterion(aux_outputs, labels)
-                batch_loss = loss1+0.4*loss2
-
-            # train model
-            batch_loss.backward()
-            optimizer.step()
-
-            # batch stats
-            epoch_loss += batch_loss.item()
-
-            # batch LOGGING
-            #logger.add_scalar('TRAINING Loss', loss, num_o_batches*epoch+i)
-            training_progressbar(i, num_o_batches, epoch-1, max_epochs, 2, 140)
-
-        ## per epoch EVALUATION ##
-        assay = eval_loop(model, eval_loader, device, criterion)
-        # verified: eval_loss   (float)
-        #           classes (list of strings)
-        #           true_images (images)
-        #           true_inputs (satiations)
-        #           prediction_outputs (satiations)
-
-        ## BOOKKEEPING ##
-        classes = assay['classes']
-        input_labels = [classes[c] for c in assay['true_inputs']]
-        output_labels = [classes[c] for c in assay['prediction_outputs']]
-        f1_weighted = metrics.f1_score(assay['true_inputs'], assay['prediction_outputs'], average='weighted')
-        f1_macro = metrics.f1_score(assay['true_inputs'], assay['prediction_outputs'], average='macro')
-        f1_perclass = metrics.f1_score(input_labels, output_labels, average=None)
-        recall_perclass = metrics.recall_score(input_labels, output_labels, average=None)
-
-        classes_by_recall = sorted(classes, reverse=True,
-            key=lambda c: (recall_perclass[classes.index(c)], f1_perclass[classes.index(c)]))
-
-        loss_record.append((epoch_loss, assay['eval_loss']))
-        if plotutil: plotutil.loss(loss_record, output=savepath+'/loss_plot.png', title='{} Loss'.format(run_name))
-
-        record_epoch_stats(epoch=epoch, eval_dict=assay, append=True, name=run_name,
-                           training_loss=epoch_loss,
-                           savepath=savepath, filename='evaluation_records.lod', cli_args=cli_args,
-                           secs_elapsed=ts2secs(training_startime, time.strftime(YMD_HMS)))
-
-        # Saving the model if it's the best
-        if assay['eval_loss'] < best_loss:
-            # saving model
-            torch.save({'state_dict': model.state_dict(),
-                        'classes':    classes,
-                        'type':       cli_args['model'],
-                        'args':       cli_args,
-                        'version':    {'torch':       torch.__version__,
-                                       'torchvision': torchvision.__version__}
-                        },
-                       '{}/model.pt'.format(savepath))
-
-            # saving training results
-            record_epoch_stats(epoch=epoch, eval_dict=assay, append=False, name=run_name,
-                               training_loss=epoch_loss,
-                               savepath=savepath, filename='best_epoch.dict', cli_args=cli_args,
-                               secs_elapsed=ts2secs(training_startime, time.strftime(YMD_HMS)))
-
-            title = '{}, f1_weighted={:.2f}% (epoch {})'.format(run_name, 100*f1_weighted, epoch)
-            if plotutil:
-                plotutil.make_confusion_matrix_plot(input_labels, output_labels, classes_by_recall, title,
-                                          output=savepath+'/confusion_matrix.png', text_as_percentage=True)
-
-        # terminal output
-        now = time.strftime(YMD_HMS)
-        epoch_elapsed = ts2secs(epoch_startime, now)
-        total_elapsed = ts2secs(training_startime, now)
-        output_string = '\nEpoch {} done in {:.0f} mins. loss={:.3f}. f1_w={:.1f}% f1_m={:.1f}%. Total elapsed time={:.2f} hrs'
-        print(output_string.format(epoch, epoch_elapsed/60, assay['eval_loss'],
-                                   100*f1_weighted, 100*f1_macro, total_elapsed/(60*60)))
-
-        best_epoch_text = 'Best Epoch was {} with a validation loss of {:.3f} and an F1 score of {:.1f}%'
-        # note or record best epoch, or stop early
-        if best_loss > assay['eval_loss']:
-            best_loss = assay['eval_loss']
-            best_epoch = epoch
-            best_f1 = f1_weighted
-        elif epoch > 1.33*best_epoch and epoch >= min_epochs:
-            print("Model probably won't be improving more from here, shutting this operation down")
-            print(best_epoch_text.format(best_epoch, best_loss, 100*best_f1))
-            return
-        if best_epoch != epoch:
-            print(best_epoch_text.format(best_epoch, best_loss, 100*best_f1))
-
-
-def eval_loop(model, eval_loader, device, criterion):
-    """ returns dict of: accuracy, loss, perclass_accuracy, perclass_correct, perclass_totals,
-                         true_inputs, predicted_outputs, f1_avg, perclass_f1, classes )"""
-
-    classes = eval_loader.dataset.classes
-
-    eval_loss = 0
-    all_true_input_labels = []
-    all_input_image_paths = []
-    all_predicted_output_labels = []
-    all_predicted_output_ranks = []
-    all_predicted_output_allranks = []  # all the scores for all classes, not just max
-
-    model.eval()
-    with torch.no_grad():
-        criterion = criterion.to(device)
-        for i, data in enumerate(eval_loader):
-
-            # forward pass
-            input_images, true_input_labels, input_image_paths = data
-            input_images, true_input_labels = input_images.to(device), true_input_labels.to(device)
-
-            # run model and determin loss
-            outputs = model(input_images)  # eval-loop
-            try:
-                outputs = outputs.to(device)
-                loss = criterion(outputs, true_input_labels)
-            except AttributeError:  # e="'tuple' object has no attribute 'to'" when inception_v3 aux_logits=True
-                outputs, aux_outputs = outputs
-                outputs, aux_outputs = outputs.to(device), aux_outputs.to(device)
-                loss1 = criterion(outputs, true_input_labels)
-                loss2 = criterion(aux_outputs, true_input_labels)
-                loss = loss1+0.4*loss2
-
-            eval_loss += loss.item()
-
-            # format results
-            outputs = F.softmax(outputs, dim=1)
-            predicted_output_ranks, predicted_output_labels = torch.max(outputs, 1)
-            # outputs format is a tensor list of lists, inside lists are len(classes) long,
-            # each with a per-class weight prediction. outide list is batch_size long.
-            # doing torch.max returns the index of the highest per-class prediction (inside list),
-            # for all elements of outside list. Therefor len(predicted)==len(output)==batch_size
-
-            #all_predicted_output_allranks.extend(outputs.tolist())
-            all_predicted_output_labels.extend([p.item() for p in predicted_output_labels])
-            all_predicted_output_ranks.extend([r.item() for r in predicted_output_ranks])
-            all_true_input_labels.extend([t.item() for t in true_input_labels])
-            all_input_image_paths.extend(input_image_paths)
-
-            # printing progress
-            testing_progressbar(i, len(eval_loader))
-
-    # result metrics
-    assert len(all_predicted_output_labels) == \
-           len(all_true_input_labels) == \
-           len(all_input_image_paths)
-    assay = dict(eval_loss=eval_loss,
-                 classes=classes,
-                 true_inputs=all_true_input_labels,
-                 prediction_outputs=all_predicted_output_labels,
-                 prediction_ranks=all_predicted_output_ranks,
-                 #prediction_allscores=all_predicted_output_allranks,
-                 true_images=all_input_image_paths)
-
-    return assay
-
-
-## INITIALIZATION ##
-
+#!/usr/bin/env python
+"""the main thing"""
+
+# built in imports
+from shutil import copyfile
 import argparse
+import os
+
+# 3rd party imports
+import torch
+from torch.utils.data import DataLoader
+from pytorch_lightning import Trainer, seed_everything
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+
+# project imports
+import ifcb
+from neuston_models import NeustonModel
+from neuston_callbacks import SaveValidationResults, SaveRunResults
+from csv_logger import CSVLogger  # ptl_v0.8 does not have this but ptl_v0.9 does
+from neuston_data import get_trainval_datasets, IfcbBinDataset
+
+## NOTES ##
+# https://pytorch-lightning.readthedocs.io/en/0.8.5/introduction_guide.html
+
+
+def main(args):
+
+    ## GPU torch setup ## - use all available GPU's
+    # pytorch uses the ~index~ of CUDA_VISIBLE_DEVICES.
+    # So if gpus == [3,4] then device "cuda:0" == GPU no. 3
+    #                      and device "cuda:1" == GPU no. 4
+    if torch.cuda.is_available():
+        args.gpus = [int(gpu) for gpu in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
+    else: args.gpus = None
+
+    if args.cmd_mode=='TRAIN':
+        do_training(args)
+    else: # RUN
+        do_run(args)
+
+
+def do_training(args):
+
+    # Setup Callbacks
+    validation_results_callbacks = []
+    plotting_callbacks = [] # TODO
+    if not args.result_files: args.result_files = [['results.json','image_basenames']]
+    for result_file in args.result_files:
+        svr = SaveValidationResults(outdir=args.OUTDIR, outfile=result_file[0], series=result_file[1:])
+        validation_results_callbacks.append(svr)
+
+    # Set Seed. If args.seed is 0 ie None, a random seed value is used and stored
+    args.seed = seed_everything(args.seed or None)
+
+    #if os.path.isfile(args.MODEL): #TODO: transfer learning option
+    # see https://pytorch-lightning.readthedocs.io/en/stable/transfer_learning.html?highlight=predictions
+
+    # Setup dataloaders
+    training_dataset, validation_dataset = get_trainval_datasets(args)
+    assert training_dataset.classes == validation_dataset.classes
+    args.classes = training_dataset.classes
+    # TODO add to args classes removed by class_min and skipped/combined from class_config
+
+    print('Loading Training Dataloader...')
+    training_loader = DataLoader(training_dataset, pin_memory=True, shuffle=True,
+                                 batch_size=args.batch_size, num_workers=args.loaders)
+    print('Loading Validation Dataloader...')
+    validation_loader = DataLoader(validation_dataset, pin_memory=True, shuffle=False,
+                                   batch_size=args.batch_size, num_workers=args.loaders)
+
+    # Setup Trainer
+    logger = CSVLogger(save_dir=os.path.join(args.OUTDIR,'logs'), name='default', version=None)
+    chkpt_path = os.path.join(args.OUTDIR, 'chkpts')
+    os.makedirs(chkpt_path, exist_ok=True)
+    trainer = Trainer(deterministic=True, logger=logger,
+                      gpus=len(args.gpus) if args.gpus else None,
+                      max_epochs=args.emax, min_epochs=args.emin,
+                      early_stop_callback=EarlyStopping(patience=args.estop) if args.estop else False,
+                      checkpoint_callback=ModelCheckpoint(filepath=chkpt_path),
+                      callbacks=validation_results_callbacks,
+                      )
+
+    # Setup Model
+    classifier = NeustonModel(args)
+    # TODO setup dataloaders in the model, allowing auto-batch-size optimization
+    # see https://pytorch-lightning.readthedocs.io/en/stable/training_tricks.html#auto-scaling-of-batch-size
+
+    # Do Training
+    trainer.fit(classifier, train_dataloader=training_loader, val_dataloaders=validation_loader)
+
+    # Copy best model
+    checkpoint_path = trainer.checkpoint_callback.best_model_path
+    output_path = os.path.join(args.OUTDIR, args.model_file)
+    copyfile(checkpoint_path, output_path)
+
+    # Copying Logs
+    if args.epochs_log:
+        output_path = os.path.join(args.OUTDIR, args.epochs_log)
+        copyfile(logger.experiment.metrics_file_path, output_path)
+    if args.args_log:
+        src_path = os.path.join(logger.experiment.log_dir, logger.experiment.NAME_HPARAMS_FILE)
+        output_path = os.path.join(args.OUTDIR, args.args_log)
+        copyfile(src_path, output_path)
+
+
+def do_run(args):
+
+    # load model
+    classifier = NeustonModel.load_from_checkpoint(args.MODEL)
+    classifier.args.run_outfile = args.outfile
+    classifier.args.run_outdir = args.OUTDIR
+    seed_everything(classifier.args.seed)
+
+    # Setup Callbacks
+    run_results_callbacks = []
+    plotting_callbacks = []  # TODO
+    #for result_file in args.result_files:
+    #    svr = SaveRunResults(outdir=args.OUTDIR, outfile=result_file[0], series=result_file[1:])
+    #    run_results_callbacks.append(svr)
+
+    # create trainer
+    trainer = Trainer(deterministic=True,
+                      gpus=len(args.gpus) if args.gpus else None,
+                      logger=False, checkpoint_callback=False,
+                      callbacks=run_results_callbacks,
+                      )
+
+    # create dataset
+    if args.src_type == 'bin':
+        # Formatting Dataset
+        if os.path.isdir(args.SRC):
+            dd = ifcb.DataDirectory(args.SRC)
+        elif os.path.isfile(args.SRC) and args.SRC.endwith('.txt'): # TODO TEST: textfile bin run
+            with open(args.SRC,'r') as f:
+                bins = f.readlines()
+            parent = os.path.commonpath(bins)
+            dd = ifcb.DataDirectory(parent,whitelist=bins)
+        else: # single bin # TODO TEST: single bin run
+            parent = os.path.dirname(args.SRC)
+            bin_id = os.path.basename(args.src)
+            dd = ifcb.DataDirectory(parent,whitelist=[bin_id])
+
+        for i, bin_id in enumerate(dd):
+            bin_dataset = IfcbBinDataset(bin_id, classifier.args.resize)
+            image_loader = DataLoader(bin_dataset, batch_size=args.batch_size,
+                                      pin_memory=True, num_workers=args.loaders)
+            if len(image_loader) == 0: continue # skip empty bin
+
+            # Do Runs
+            trainer.test(classifier, test_dataloaders=image_loader)
+
+    else: # images
+        if os.path.isdir(args.SRC):
+            img_paths = [] # TODO os walk to find all images
+        elif os.path.isfile(args.SRC) and args.SRC.endwith('.txt'): # TODO TEST: textfile img run
+            with open(args.SRC,'r') as f:
+                img_paths = f.readlines()
+            # TODO assert that all paths are files with img-style extentions
+        else: # single img # TODO TEST: single img run
+            img_paths = [args.SRC]
+
+        raise NotImplementedError('Running on images directly is not yet supported')
+        image_dataset = 0#img_paths
+        image_loader = 0
+        trainer.test(classifier,test_dataloaders=image_loader)
+
+
 
 if __name__ == '__main__':
-    model_choices = ['inception_v3', 'alexnet', 'squeezenet',
-                     'vgg11', 'vgg11_bn', 'vgg13', 'vgg13_bn', 'vgg16', 'vgg16_bn', 'vgg19', 'vgg19_bn',
-                     'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet151',
-                     'densenet121', 'densenet169', 'densenet161', 'densenet201']
-    augmentation_choices = ['flipx', 'flipy', 'flipxy', 'training-only']
+    parser = argparse.ArgumentParser(description='Train, Run, and perform other tasks related to ifcb and general image classification!')
 
-    ## Parsing command line input ##
-    parser = argparse.ArgumentParser()
-    parser.add_argument("src", help='root src directory containing class folders')
-    parser.add_argument("output_dir", help="directory to output logs and saved model")
-    parser.add_argument("--split", required=True,
-                        help='ratio of files to split into training and evaluation datasets. eg: "80:20" ')
-    parser.add_argument("--class-config", nargs=2,
-                        help='path to a configuration csv + column-header. Used for skipping and grouping classes in SRC')
-    parser.add_argument("--seed", type=int,
-                        help="specifying a seed value allows reproducability when randomizing images for training and evaluation")
-    parser.add_argument("--swap", "--swap-datasets-around", action='store_true',
-                        help="swap training and evaluation datasets with each other. Useful for 50:50 dupe runs.")
-    parser.add_argument("--class-minimum", type=int, default=2,
-                        help='the minimum viable number of images per class. Classes with fewer pre-split instances than this value will not be included.')
-    #TODO any if either dataset must drop a class, both datasets drop the class.
-    #TODO Can be specified pre-SPLIT (single number) and post-SPLIT (colon-deliminated). eg "10" and "8:2" would be equivalent if SPLIT==80:20,
-    #     but 8:3 would also be allowed, forcing eval to be the limiting factor with at least 3 not two instances needed.
-    parser.add_argument("--model", default='inception_v3', choices=model_choices,
-                        help="select a model architecture to train (default to inceptin_v3)")
-    parser.add_argument("--pretrained", default=False, action='store_true',
-                        help='Preloads model with weights trained on imagenet')
-    parser.add_argument("--wn", default=False, action='store_true',
-                        help='if included, classes will be weight-normalized during training. This may boost classes with fewer instances.')
-    parser.add_argument("--max-epochs", default=60, type=int,
-                        help="Maximum Number of Epochs (default 60).\nTraining may end before <max-epochs> if evaluation loss doesn't improve beyond best_epoch*1.33")
-    parser.add_argument("--min-epochs", default=16, type=int,
-                        help="Minimum number of epochs to run (default 10)")
-    parser.add_argument("--batch-size", default=108, type=int, dest='batch_size',
-                        help="how many images to process in a batch, (default 108, a number divisible by 1,2,3,4 to ensure even batch distribution across up to 4 GPUs)")
-    parser.add_argument("--loaders", default=4, type=int,
-                        help='total number of threads to use for loading data to/from GPUs. 4 per GPU is good. (Default 4 total)')
-    parser.add_argument("--augment", default=[], nargs='+', choices=augmentation_choices,
-                        help='''Data augmentation can improve training. Listed transformations -may- be applied to any given input image when loaded. 
-                               "flipx" and "flipy" denotes mirroring the image vertically and horizontally respectively.
-                                If "training-only" is included, augmentation transformations will only be applied to the training set.''')
-    parser.add_argument("--learning-rate", '--lr', default=0.001, type=float,
-                        help='The (initial) learning rate of the training optimizer (Adam). Default is 0.001')
+    # Create subparsers
+    subparsers = parser.add_subparsers(dest='cmd_mode', help='These sub-commands are mutually exclusive. Note: optional arguments (below) must be specified before "TRAIN" or "RUN"')
+    train = subparsers.add_parser('TRAIN', help='Train a new model')
+    run = subparsers.add_parser('RUN', help='Run a previously trained model')
+    # TODO the below to be included later
+    #check = subparsers.add_parser('check', help='Run and compare a trained model against its validation dataset results')
+    #dupes = subparsers.add_parser('dupes', help='Perform a special training') # this may be best suited to it's own "test-tube" based HPC-enabled module.
+    # TODO the below may be better suited to a utils module
+    #norm = subparsers.add_parser('norm', help='Determine the MEAN and STD values to use for --img-norm')
+    #config= subparsers.add_parser('classconfig', help='create a default class-config ready csv for a given dataset')
 
-    args = parser.parse_args()  # ingest CLI arguments
+    ## Common Vars ##
+    parser.add_argument('--batch', dest='batch_size', metavar='SIZE', default=108, type=int, help='Number of images per batch. Defaults is 108') # todo: auto-mode built in to ptl
+    parser.add_argument('--loaders', metavar='N', default=4, type=int, help='Number of data-loading threads. 4 per GPU is typical. Default is 4') # todo: auto-mode?
 
-    args.output_dir = args.output_dir.rstrip(os.sep)
-    if not os.path.isdir(args.output_dir):
-        os.makedirs(args.output_dir)
-    print("Output directory: {}".format(args.output_dir))
-    print("pyTorch VERSION:", torch.__version__)
-    print("CUDA Version: {}".format(torch.version.cuda))
+    ## Training Vars ##
+    train.add_argument('MODEL', help='Select a base model. Eg: "inception_v3"') # TODO choices field. TODO: "Accepts a known model name, or a path to a specific model file for transfer learning"
+    train.add_argument('SRC', help='Directory with class-label subfolders and images')
+    train.add_argument('OUTDIR', help='Set output directory.')
 
-    ## gpu torch setup ##
-    if torch.cuda.is_available():
-        gpus = [int(gpu) for gpu in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
-        # pytorch keys off the ~index~ of CUDA_VISIBLE_DEVICES.
-        # So if gpus == [3,4] then device "cuda:0" == GPU no. 3
-        #                      and device "cuda:1" == GPU no. 4
-        device = torch.device('cuda:0')
-        currdev = torch.cuda.current_device()
-    else:
-        gpus = []
-        device = torch.device("cpu")
-        currdev = None
-    print("CUDA_VISIBLE_DEVICES: {}".format(gpus))
-    #print("Active Device is {} (aka torch.cuda.current_device() == {} )".format(device, currdev))
+    model = train.add_argument_group(title='Model Adjustments', description=None)
+    model.add_argument('--untrain', dest='pretrained', default=True, action='store_false', help='If set, initializes MODEL ~without~ pretrained neurons. Default (unset) is pretrained')
+    model.add_argument('--img-norm', nargs=2, metavar=('MEAN','STD'), help='Normalize images by MEAN and STD. This is like whitebalancing.')
+    # TODO layer freezing and transfer learning params.
 
-    ## initializing data ##
-    print('Initializing Data...')
-    if not args.class_config:
-        nd = NeustonDataset(src=args.src, minimum_images_per_class=args.class_minimum)
-    else:
-        nd = NeustonDataset.from_csv(csv_file=args.class_config[0], column_to_run=args.class_config[1],
-                                     src=args.src, minimum_images_per_class=args.class_minimum)
-        # TODO record which classes were grouped and skipped.
-    ratio1, ratio2 = map(int, args.split.split(':'))
+    data = train.add_argument_group(title='Dataset Adjustments', description=None)
+    data.add_argument('--seed', default=0, type=int, help='Set a specific seed for deterministic output & dataset-splitting reproducability.')
+    data.add_argument('--split', metavar='T:V', default='80:20', help='Ratio of images per-class to split randomly into Training and Validation datasets. Randomness affected by SEED. Default is "80:20"')
+    data.add_argument('--class-config', metavar=('CSV','COL'), nargs=2, help='Skip and combine classes as defined by column COL of a special CSV configuration file')
+    data.add_argument('--class-min', metavar='MIN', default=2, type=int, help='Exclude classes with fewer than MIN instances. Default is 2')
+    
+    epochs = train.add_argument_group(title='Epoch Parameters', description=None)
+    epochs.add_argument('--emax', metavar='MAX',default=60, type=int, help='Maximum number of training epochs. Default is 60')
+    epochs.add_argument('--emin', metavar='MIN', default=10, type=int, help='Minimum number of training epochs. Default is 10')
+    epochs.add_argument('--estop', metavar='STOP', default=10, type=int, help='Early Stopping: Number of epochs following a best-epoch after-which to stop training. Set STOP=0 to disable. Default is 10')
 
-    if args.seed is None:
-        args.seed = random.randrange(sys.maxsize)
+    augs = train.add_argument_group(title='Augmentation Options', description='Data Augmentation is a technique by which training results may improved by simulating novel input')
+    augs.add_argument('--flip', choices=['x','y','xy','x+V','y+V','xy+V'],
+        help='Training images have 50%% chance of being flipped along the designated axis: (x) vertically, (y) horizontally, (xy) either/both. May optionally specify "+V" to include Validation dataset')
 
-    dataset_tup = nd.split(ratio1, ratio2, seed=args.seed)
-    if args.swap:
-        evaluation_dataset, training_dataset = dataset_tup
-    else:
-        training_dataset, evaluation_dataset = dataset_tup
+    out = train.add_argument_group(title='Output Options')
+    out.add_argument('--model-file', default='model.ptl', help='The file name of the output model. Default is model.ptl')
+    out.add_argument('--epochs-log', help='Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores.')
+    out.add_argument('--args-log', help='Specify a yaml filename. Includes all user-specified and default training parameters.')
+    out.add_argument('--results',  dest='result_files', metavar=('FNAME','SERIES'), nargs='+', action='append', default=[],
+                     help='FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats. Default is "results.json". '
+                          'SERIES: Options are: image_basenames, image_fullpaths, output_ranks, output_fullranks, confusion_matrix. class_labels, input_classes, output_classes are always included by default. '
+                          '--results may be specified multiple times in order to create different files. If not invoked, default is "results.json image_basenames"')
+    #out.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
-    ci_nd = nd.classes_ignored_from_too_few_samples
-    ci_train = training_dataset.classes_ignored_from_too_few_samples
-    ci_eval = evaluation_dataset.classes_ignored_from_too_few_samples
-    assert ci_eval == ci_train
-    if ci_nd:
-        msg = '\n{} out of {} classes ignored from --class-minimum {}, PRE-SPLIT'
-        msg = msg.format(len(ci_nd), len(nd.classes+ci_nd), args.class_minimum)
-        ci_nd = ['({:2}) {}'.format(l, c) for c, l in ci_nd]
-        print('\n    '.join([msg]+ci_nd))
-    if ci_eval:
-        msg = '\n{} out of {} classes ignored from --class-minimum {}, POST-SPLIT'
-        msg = msg.format(len(ci_eval), len(evaluation_dataset.classes+ci_eval), args.class_minimum)
-        ci_eval = ['({:2}) {}'.format(l, c) for c, l in ci_eval]
-        print('\n    '.join([msg]+ci_eval))
-    print()
+    #optim = train.add_argument_group(title='Optimization', description='Adjust learning hyper parameters')
+    #optim.add_argument('--optimizer', default='Adam', choices=['Adam'], help='Select and optimizer. Default is Adam')
+    #optim.add_argument('--learning-rate',default=0.001,type=float,help='Set a learning rate. Default is 0.001')
+    #optim.add_argument('--weight-decay', default='?', help="not sure where this comes in")
+    #optim.add_argument('--class-norm', help='Bias results to emphasize smaller classes')
+    #optim.add_argument('--batch-norm', help='i forget what this is exactly rn')
 
-    ## TESTING SEED ##
-    #images = training_dataset.images + evaluation_dataset.images
-    #with open(args.output_dir+'/seed_{}_testA.list'.format(args.seed),'w') as f:
-    #    f.write('\n'.join(images)+'\n')
-    #print('seed file written')
-    #import sys; sys.exit()
-    ## END TESTING SEED ##
+    ## Run Vars ##
+    run.add_argument('MODEL', help='Path to a previously-trained model file')
+    run.add_argument('SRC', help='Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. Directories are accessed recursively')
+    run.add_argument('OUTDIR', help='Set output directory.')
 
-    # Transforms and augmentation #
-    pixels = [299, 299] if args.model == 'inception_v3' else [224, 224]
-    base_tforms = [transforms.Resize(pixels),
-                   transforms.ToTensor()]
-
-    if args.augment != []:
-        # when data is loaded into model, there is a 50% chance per axis it will be transformed
-        aug_tforms = []
-        if any([arg in args.augment for arg in ['flip', 'flipxy', 'flip-xy', 'flip-both']]):
-            aug_tforms.append(transforms.RandomVerticalFlip(p=0.5))
-            aug_tforms.append(transforms.RandomHorizontalFlip(p=0.5))
-        elif any([arg in args.augment for arg in ['flipx', 'flip-x', 'flip-vertical']]):
-            aug_tforms.append(transforms.RandomVerticalFlip(p=0.5))
-        elif any([arg in args.augment for arg in ['flipy', 'flip-y', 'flip-horizontal']]):
-            aug_tforms.append(transforms.RandomHorizontalFlip(p=0.5))
-
-        train_tforms = transforms.Compose(aug_tforms+base_tforms)
-        if 'training-only' in args.augment:
-            eval_tforms = transforms.Compose(base_tforms)
-        else:
-            eval_tforms = train_tforms
-    # no augmentation #
-    else:
-        args.augment = False
-        train_tforms = eval_tforms = transforms.Compose(base_tforms)
-
-    # applying transforms
-    training_dataset.transforms = train_tforms
-    evaluation_dataset.transforms = eval_tforms
-
-    # create dataloaders
-    print('Loading Training Dataloader...')
-    training_loader = torch.utils.data.DataLoader(training_dataset, pin_memory=True, shuffle=True,
-                                                  batch_size=args.batch_size, num_workers=args.loaders)
-    print('Loading Evaluation Dataloader...')
-    evaluation_loader = torch.utils.data.DataLoader(evaluation_dataset, pin_memory=True, shuffle=False,
-                                                    batch_size=args.batch_size, num_workers=args.loaders)
-
-    # number of classes
-    assert training_loader.dataset.classes == evaluation_loader.dataset.classes
-    num_o_classes = len(training_loader.dataset.classes)
-
-    ## initializing model  ##
-    # options:
-    #     inception_v3, alexnet, squeezenet,
-    #     vgg11, vgg13, vgg16, vgg19,
-    #     vgg11_bn, vgg13_bn, vgg16_bn, vgg19_bn,
-    #     resnet18, resnet34, resnet50, resnet101, resnet151,
-    #     densenet121, densenet169, densenet161, densenet201
-    print('Adjusting model output layer for {} classes...'.format(num_o_classes))
-    if args.model == 'inception_v3':
-        model = MODEL_MODULE.inception_v3(args.pretrained)  #, num_classes=num_o_classes, aux_logits=False)
-        model.fc = nn.Linear(model.fc.in_features, num_o_classes)
-        model.AuxLogits.fc = nn.Linear(model.AuxLogits.fc.in_features, num_o_classes)
-    elif args.model == 'alexnet':
-        model = getattr(MODEL_MODULE, args.model)(args.pretrained)
-        model.classifier[6] = nn.Linear(model.classifier[6].in_features, num_o_classes)
-    elif args.model == 'squeezenet':
-        model = getattr(MODEL_MODULE, args.model+'1_1')(args.pretrained)
-        model.classifier[1] = nn.Conv2d(512, num_o_classes, kernel_size=(1, 1), stride=(1, 1))
-        model.num_classes = num_o_classes
-    elif args.model.startswith('vgg'):
-        model = getattr(MODEL_MODULE, args.model)(args.pretrained)
-        model.classifier[6] = nn.Linear(model.classifier[6].in_features, num_o_classes)
-    elif args.model.startswith('resnet'):
-        model = getattr(MODEL_MODULE, args.model)(args.pretrained)
-        model.fc = nn.Linear(model.fc.in_features, num_o_classes)
-    elif args.model.startswith('densenet'):
-        model = getattr(MODEL_MODULE, args.model)(args.pretrained)
-        model.classifier = nn.Linear(model.classifier.in_features, num_o_classes)
-    else:
-        raise KeyError("model unknown!")
-
-    # multiple GPU wrapper
-    if torch.cuda.device_count() > 1:  # if multiple-gpu's detected, use available gpu's
-        model = nn.DataParallel(model, device_ids=list(range(len(gpus))))
-    model.to(device)  # sends model to GPU
-
-    # optimizerx & loss function criterion
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.learning_rate)
-    criterion = nn.CrossEntropyLoss
-    if args.wn: # weight normalization
-        # "nd" is the unsplit original NeustonDataset
-        perclass_count = {class_label: len(imgs) for class_label, imgs in nd.images_perclass.items()}
-        const = len(nd.imgs)/len(perclass_count)
-        weights = [const/count for count in perclass_count.values()]
-        print('\nCLASS: WEIGHT [count]')
-        print('Weight = ( total_image_count / number_of_classes ) /count_perclass')
-        print('       = ( {} / {} )/count = ~{:.0f}/count'.format(len(training_loader.dataset.imgs), len(perclass_count), const))
-        [print('{:>30}: {: 5.2f} [{}]'.format(c, w, n)) for c, n, w in
-         zip(perclass_count.keys(), perclass_count.values(), weights)]
-        print()
-        weights = torch.FloatTensor(weights).to(device)
-    else:
-        weights = None
-
-    try:
-        criterion = criterion(weight=weights).to(device)
-    except TypeError:
-        criterion = criterion().to(device)
-
-    print("Model: {}".format(model.__class__))
-    print("Transformations: {}".format(train_tforms))
-    print("Epochs: {}-{}, Batch size: {}".format(args.min_epochs, args.max_epochs, args.batch_size))
-
-    training_loop(model, training_loader, evaluation_loader, device, args.output_dir, optimizer, criterion,
-                  weights=weights, max_epochs=args.max_epochs, min_epochs=args.min_epochs, cli_args=vars(args))
+    run.add_argument('--type', dest='src_type', default='bin', choices=['bin','img'], help='File type to perform classification on. Defaults is "bin"')
+    run.add_argument('--outfile', default="{bin}_class_v2.h5",
+        help='''Name/pattern of the output classification file. 
+                If TYPE==bin, "{bin}" in OUTFILE will be replaced with the bin id on a per-bin basis.
+                If TYPE==img, "{dir}" in OUTFILE will be replaced with the parent directory of classified images.
+                A few output file formats are recognized: .csv, .mat, and .h5 (hdf).
+                Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "{dir}.csv".
+             ''')
+    #run.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
 
+    args = parser.parse_args()
+    main(args)
+
+
+# TODO put this into git, i think it covers most of what the old neuston_net could do
+# TODO (minor) run outfile using callbacks. better flexibility
+# TODO (minor) move dataloaders to NeustonModel for auto-batch-size enabling
+# TODO (minor) utility script to fine img-norm MEAN STD
+# TODO (minor) bin script for connecting to hpc, connecting to a gpu, enabling conda env, and moving to working directory
+# TODO run on larger, current dataset using class-config
+# TODO implement running on images
+# TODO implement plots (matplotlib vs plotly?)
+# TODO implement hpc/slurm utility script (test-tube)
+# TODO dupes autorunner via hpc/slurm utility^

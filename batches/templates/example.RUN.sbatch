@@ -1,5 +1,3 @@
-#!/usr/bin/env bash
-
 #SBATCH --job-name=RUN_ExampleDataset_ExampleModel
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -19,9 +17,9 @@ echo "Job ID: $SLURM_JOB_ID, JobName: $SLURM_JOB_NAME"
 hostname; pwd; date
 
 # SETTING UP ENVIRONMENT #
-module load cuda91/toolkit cuda91/blas cuda91/cudnn cuda91/fft
+module load cuda10.1/toolkit cuda10.1/blas cuda10.1/cudnn cuda91/fft
 module load anaconda
-source activate ifcb
+source activate ifcbnn
 echo "Environment... Loaded"
 
 # PARAMS #
@@ -31,14 +29,6 @@ OUTDIR=run-output/"$SLURM_JOB_NAME"
 mkdir -vp "$OUTDIR"
 
 # RUN SCRIPT #
-time python neuston_run.py "$DATASET" --model "$MODEL" --outdir "$OUTDIR"
+time python neuston_net.py RUN "$MODEL" "$DATASET" "$OUTDIR" --type bin --outfile "{bin}_class_v2.h5"
 
-# This keeps a number of default parameters at their default values, such as
-# --input-type bins
-# --outfile {bin}_class_v2.h5
-# --batch-size 108
-# --loaders 4
 
-# if you want to limit your processing to a certain selection of bins, you may use
-# --bin-filter path/to/your-list-of-bins.txt
-# where "your-list-of-bins.txt" has one bin-id per line. eg: "IFCB5_2017_338_173613"
