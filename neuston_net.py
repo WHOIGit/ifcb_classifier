@@ -4,20 +4,21 @@
 # built in imports
 from shutil import copyfile
 import argparse
-import os
+import os, glob
 
 # 3rd party imports
 import torch
 from torch.utils.data import DataLoader
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from torchvision.datasets.folder import IMG_EXTENSIONS
 
 # project imports
 import ifcb
 from neuston_models import NeustonModel
 from neuston_callbacks import SaveValidationResults, SaveRunResults
 from csv_logger import CSVLogger  # ptl_v0.8 does not have this but ptl_v0.9 does
-from neuston_data import get_trainval_datasets, IfcbBinDataset
+from neuston_data import get_trainval_datasets, IfcbBinDataset, ImageDataset
 
 ## NOTES ##
 # https://pytorch-lightning.readthedocs.io/en/0.8.5/introduction_guide.html
@@ -125,11 +126,27 @@ def do_run(args):
                       callbacks=run_results_callbacks,
                       )
 
+    # dataset filter if any
+    filter_mode, filter_keywords = None,[]
+    if args.filter:
+        filter_mode = args.filter[0]
+        for keyword in args.filter[1:]:
+            if os.path.isfile(keyword):
+                with open(keyword) as f:
+                    filter_keywords.extend(f.readlines())
+            else:
+                filter_keywords.append(keyword)
+
     # create dataset
     if args.src_type == 'bin':
         # Formatting Dataset
         if os.path.isdir(args.SRC):
-            dd = ifcb.DataDirectory(args.SRC)
+            if filter_mode=='IN':
+                dd = ifcb.DataDirectory(args.SRC, whitelist=filter_keywords)
+            elif filter_mode=='OUT':
+                dd = ifcb.DataDirectory(args.SRC, blacklist=filter_keywords)
+            else:
+                dd = ifcb.DataDirectory(args.SRC)
         elif os.path.isfile(args.SRC) and args.SRC.endwith('.txt'): # TODO TEST: textfile bin run
             with open(args.SRC,'r') as f:
                 bins = f.readlines()
@@ -141,27 +158,48 @@ def do_run(args):
             dd = ifcb.DataDirectory(parent,whitelist=[bin_id])
 
         for i, bin_id in enumerate(dd):
+
+            if args.filter: # applying filter
+                if filter_mode=='IN': # if bin does NOT match any of the keywords, skip it
+                    if not any([k in str(bin_id) for k in filter_keywords]): continue
+                elif filter_mode=='OUT': # if bin matches any of the keywords, skip it
+                    if any([k in str(bin_id) for k in filter_keywords]): continue
+
             bin_dataset = IfcbBinDataset(bin_id, classifier.args.resize)
             image_loader = DataLoader(bin_dataset, batch_size=args.batch_size,
                                       pin_memory=True, num_workers=args.loaders)
-            if len(image_loader) == 0: continue # skip empty bin
+
+            # skip empty bins
+            if len(image_loader) == 0: continue
 
             # Do Runs
             trainer.test(classifier, test_dataloaders=image_loader)
 
     else: # images
+        img_paths = []
         if os.path.isdir(args.SRC):
-            img_paths = [] # TODO os walk to find all images
+            for img in glob.iglob(os.path.join(args.SRC,'**','**'), recursive=True):
+                if any([img.endswith(ext) for ext in IMG_EXTENSIONS]):
+                    img_paths.append(img)
         elif os.path.isfile(args.SRC) and args.SRC.endwith('.txt'): # TODO TEST: textfile img run
             with open(args.SRC,'r') as f:
                 img_paths = f.readlines()
-            # TODO assert that all paths are files with img-style extentions
-        else: # single img # TODO TEST: single img run
-            img_paths = [args.SRC]
+        elif any([args.SRC.endswith(ext) for ext in IMG_EXTENSIONS]): # single img # TODO TEST: single img run
+            img_paths.append(args.SRC)
 
-        raise NotImplementedError('Running on images directly is not yet supported')
-        image_dataset = 0#img_paths
-        image_loader = 0
+        # applying filter
+        if args.filter:
+            for img in img_paths[:]:
+                if filter_mode=='IN': # if img does NOT match any of the keywords, skip it
+                    if not any([k in img for k in filter_keywords]): img_paths.remove(img)
+                elif filter_mode=='OUT': # if img matches any of the keywords, skip it
+                    if any([k in img for k in filter_keywords]): img_paths.remove(img)
+
+        assert len(img_paths)>0, 'No images to process'
+        image_dataset = ImageDataset(img_paths, resize=classifier.args.resize)
+        image_loader = DataLoader(image_dataset, batch_size=args.batch_size,
+                                  pin_memory=True, num_workers=args.loaders)
+
         trainer.test(classifier,test_dataloaders=image_loader)
 
 
@@ -199,6 +237,7 @@ if __name__ == '__main__':
     data.add_argument('--split', metavar='T:V', default='80:20', help='Ratio of images per-class to split randomly into Training and Validation datasets. Randomness affected by SEED. Default is "80:20"')
     data.add_argument('--class-config', metavar=('CSV','COL'), nargs=2, help='Skip and combine classes as defined by column COL of a special CSV configuration file')
     data.add_argument('--class-min', metavar='MIN', default=2, type=int, help='Exclude classes with fewer than MIN instances. Default is 2')
+    #data.add_argument('--swap', action='store_true', help=argparse.SUPPRESS)  # dupes placeholder. may not be needed.
     
     epochs = train.add_argument_group(title='Epoch Parameters', description=None)
     epochs.add_argument('--emax', metavar='MAX',default=60, type=int, help='Maximum number of training epochs. Default is 60')
@@ -232,21 +271,31 @@ if __name__ == '__main__':
     run.add_argument('OUTDIR', help='Set output directory.')
 
     run.add_argument('--type', dest='src_type', default='bin', choices=['bin','img'], help='File type to perform classification on. Defaults is "bin"')
-    run.add_argument('--outfile', default="{bin}_class_v2.h5",
+    run_outfile = run.add_argument('--outfile', default="{bin}_class_v2.h5",
         help='''Name/pattern of the output classification file. 
                 If TYPE==bin, "{bin}" in OUTFILE will be replaced with the bin id on a per-bin basis.
-                If TYPE==img, "{dir}" in OUTFILE will be replaced with the parent directory of classified images.
                 A few output file formats are recognized: .csv, .mat, and .h5 (hdf).
-                Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "{dir}.csv".
-             ''')
+                Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "img_results.csv".
+             ''') # TODO? If TYPE==img, "{dir}" in OUTFILE will be replaced with the parent directory of classified images."
+    run.add_argument('--filter', nargs='+', metavar=('IN|OUT','KEYWORD'),
+        help='Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. KEYWORD may also be a text file containing KEYWORDs, line-deliminated.')
     #run.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
-
     args = parser.parse_args()
+
+    # CORRECTIONS AND CHECKS
+    if args.cmd_mode=='RUN':
+        # change default text of OUTFILE if TYPE==img
+        if args.src_type=='img' and args.outfile==run_outfile.default:
+            args.outfile = 'img_results.csv'
+        if args.filter:
+            if not args.filter[0] in ['IN','OUT']:
+                argparse.ArgumentTypeError('IN|OUT must be either "IN" or "OUT"')
+            if len(args.filter)<2:
+                argparse.ArgumentTypeError('Must be at least one KEYWORD')
+
     main(args)
 
-
-# TODO put this into git, i think it covers most of what the old neuston_net could do
 # TODO (minor) run outfile using callbacks. better flexibility
 # TODO (minor) move dataloaders to NeustonModel for auto-batch-size enabling
 # TODO (minor) utility script to fine img-norm MEAN STD

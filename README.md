@@ -136,7 +136,7 @@ Here are the default behaviors for the above command.
 Additional flags for neuson_net.py RUN
 ```sh
 ## Defaults ##
-usage: neuston_net.py RUN [-h] [--type {bin,img}] [--outfile OUTFILE] MODEL SRC OUTDIR
+usage: neuston_net.py RUN [-h] [--type {bin,img}] [--outfile OUTFILE]  [--filter IN|OUT KEYWORD [KEYWORD ...]] MODEL SRC OUTDIR
 
 positional arguments:
   MODEL              Path to a previously-trained model file
@@ -148,6 +148,9 @@ optional arguments:
   --type {bin,img}   File type to perform classification on. Defaults is "bin"
   --outfile OUTFILE  Name/pattern of the output classification file. If TYPE==bin, "{bin}" in OUTFILE will be replaced with the bin id on a per-bin basis. If TYPE==img, "{dir}" in OUTFILE will be replaced with the parent
                      directory of classified images. A few output file formats are recognized: .csv, .mat, and .h5 (hdf). Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "{dir}.csv".
+  --filter IN|OUT KEYWORD [KEYWORD ...]
+                        Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. KEYWORD may also be a text file containing KEYWORDs, line-deliminated.
+
 ```
 
 

@@ -269,6 +269,7 @@ def get_trainval_transforms(args):
 
     return train_tforms, val_tforms
 
+
 ## RUNNING ##
 
 class ImageDataset(Dataset):
@@ -281,8 +282,7 @@ class ImageDataset(Dataset):
     """
 
     def __init__(self, image_paths, resize=244):
-        self.image_paths = [img for img in image_paths \
-                            if any([img.endswith(ext) for ext in datasets.folder.IMG_EXTENSIONS])]
+        self.image_paths = [img for img in image_paths if any([img.endswith(ext) for ext in datasets.folder.IMG_EXTENSIONS])]
 
         # use 299x299 for inception_v3, all other models use 244x244
         self.transform = transforms.Compose([transforms.Resize([resize, resize]),
