@@ -5,6 +5,7 @@
 from shutil import copyfile
 import argparse
 import os, glob
+import datetime as dt
 
 # 3rd party imports
 import torch
@@ -42,12 +43,20 @@ def main(args):
 
 def do_training(args):
 
+    # ARG CORRECTIONS AND CHECKS
+    date_str = args.cmd_timestamp.split('T')[0]
+    args.outdir = args.outdir.format(date=date_str, TRAINING_ID=args.TRAINING_ID)
+    args.model_id = args.model_id.format(date=date_str, TRAINING_ID=args.TRAINING_ID)
+
+    # make sure output directory exists
+    os.makedirs(args.outdir,exist_ok=True)
+
     # Setup Callbacks
     validation_results_callbacks = []
     plotting_callbacks = [] # TODO
-    if not args.result_files: args.result_files = [['results.json','image_basenames']]
+    if not args.result_files: args.result_files = [['results.json','image_basenames','output_fullranks']]
     for result_file in args.result_files:
-        svr = SaveValidationResults(outdir=args.OUTDIR, outfile=result_file[0], series=result_file[1:])
+        svr = SaveValidationResults(outdir=args.outdir, outfile=result_file[0], series=result_file[1:])
         validation_results_callbacks.append(svr)
 
     # Set Seed. If args.seed is 0 ie None, a random seed value is used and stored
@@ -70,8 +79,8 @@ def do_training(args):
                                    batch_size=args.batch_size, num_workers=args.loaders)
 
     # Setup Trainer
-    logger = CSVLogger(save_dir=os.path.join(args.OUTDIR,'logs'), name='default', version=None)
-    chkpt_path = os.path.join(args.OUTDIR, 'chkpts')
+    logger = CSVLogger(save_dir=os.path.join(args.outdir,'logs'), name='default', version=None)
+    chkpt_path = os.path.join(args.outdir, 'chkpts')
     os.makedirs(chkpt_path, exist_ok=True)
     trainer = Trainer(deterministic=True, logger=logger,
                       gpus=len(args.gpus) if args.gpus else None,
@@ -91,33 +100,51 @@ def do_training(args):
 
     # Copy best model
     checkpoint_path = trainer.checkpoint_callback.best_model_path
-    output_path = os.path.join(args.OUTDIR, args.model_file)
+    output_path = os.path.join(args.outdir, args.model_id+'.ptl')
     copyfile(checkpoint_path, output_path)
 
     # Copying Logs
     if args.epochs_log:
-        output_path = os.path.join(args.OUTDIR, args.epochs_log)
+        output_path = os.path.join(args.outdir, args.epochs_log)
         copyfile(logger.experiment.metrics_file_path, output_path)
     if args.args_log:
         src_path = os.path.join(logger.experiment.log_dir, logger.experiment.NAME_HPARAMS_FILE)
-        output_path = os.path.join(args.OUTDIR, args.args_log)
+        output_path = os.path.join(args.outdir, args.args_log)
         copyfile(src_path, output_path)
 
 
 def do_run(args):
 
+    # ARG CORRECTIONS AND CHECKS
+    date_str = args.cmd_timestamp.split('T')[0]
+    args.outdir = args.outdir.format(date=date_str, RUN_ID=args.RUN_ID)
+    os.makedirs(args.outdir,exist_ok=True)
+
+    # set OUTFILE defaults
+    if args.outfile == []:
+        if args.src_type == 'bin': args.outfile=['{bin}_class_v2.h5']
+        if args.src_type == 'img': args.outfile = ['img_results.json']
+
+    # assert correct filter arguments
+    if args.filter:
+        if not args.filter[0] in ['IN', 'OUT']:
+            argparse.ArgumentTypeError('IN|OUT must be either "IN" or "OUT"')
+        if len(args.filter) < 2:
+            argparse.ArgumentTypeError('Must be at least one KEYWORD')
+
     # load model
     classifier = NeustonModel.load_from_checkpoint(args.MODEL)
-    classifier.args.run_outfile = args.outfile
-    classifier.args.run_outdir = args.OUTDIR
-    seed_everything(classifier.args.seed)
+    #classifier.hparams.run_outfile = args.outfile
+    #classifier.hparams.run_outdir = args.outdir
+    #classifier.hparams.run_timestamp = args.cmd_timestamp
+    seed_everything(classifier.hparams.seed)
 
     # Setup Callbacks
-    run_results_callbacks = []
     plotting_callbacks = []  # TODO
-    #for result_file in args.result_files:
-    #    svr = SaveRunResults(outdir=args.OUTDIR, outfile=result_file[0], series=result_file[1:])
-    #    run_results_callbacks.append(svr)
+    run_results_callbacks = []
+    for outfile in args.outfile:
+        svr = SaveRunResults(outdir=args.outdir, outfile=outfile, timestamp=args.cmd_timestamp)
+        run_results_callbacks.append(svr)
 
     # create trainer
     trainer = Trainer(deterministic=True,
@@ -165,7 +192,7 @@ def do_run(args):
                 elif filter_mode=='OUT': # if bin matches any of the keywords, skip it
                     if any([k in str(bin_id) for k in filter_keywords]): continue
 
-            bin_dataset = IfcbBinDataset(bin_id, classifier.args.resize)
+            bin_dataset = IfcbBinDataset(bin_id, classifier.hparams.resize)
             image_loader = DataLoader(bin_dataset, batch_size=args.batch_size,
                                       pin_memory=True, num_workers=args.loaders)
 
@@ -196,7 +223,7 @@ def do_run(args):
                     if any([k in img for k in filter_keywords]): img_paths.remove(img)
 
         assert len(img_paths)>0, 'No images to process'
-        image_dataset = ImageDataset(img_paths, resize=classifier.args.resize)
+        image_dataset = ImageDataset(img_paths, resize=classifier.hparams.resize)
         image_loader = DataLoader(image_dataset, batch_size=args.batch_size,
                                   pin_memory=True, num_workers=args.loaders)
 
@@ -206,6 +233,7 @@ def do_run(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train, Run, and perform other tasks related to ifcb and general image classification!')
+    # TODO move most of these parser hparams to respective pytorch-lightning objects
 
     # Create subparsers
     subparsers = parser.add_subparsers(dest='cmd_mode', help='These sub-commands are mutually exclusive. Note: optional arguments (below) must be specified before "TRAIN" or "RUN"')
@@ -223,9 +251,9 @@ if __name__ == '__main__':
     parser.add_argument('--loaders', metavar='N', default=4, type=int, help='Number of data-loading threads. 4 per GPU is typical. Default is 4') # todo: auto-mode?
 
     ## Training Vars ##
+    train.add_argument('TRAINING_ID', help='Training ID. This value is the default value used by --outdir and --model-id.')
     train.add_argument('MODEL', help='Select a base model. Eg: "inception_v3"') # TODO choices field. TODO: "Accepts a known model name, or a path to a specific model file for transfer learning"
     train.add_argument('SRC', help='Directory with class-label subfolders and images')
-    train.add_argument('OUTDIR', help='Set output directory.')
 
     model = train.add_argument_group(title='Model Adjustments', description=None)
     model.add_argument('--untrain', dest='pretrained', default=True, action='store_false', help='If set, initializes MODEL ~without~ pretrained neurons. Default (unset) is pretrained')
@@ -249,13 +277,14 @@ if __name__ == '__main__':
         help='Training images have 50%% chance of being flipped along the designated axis: (x) vertically, (y) horizontally, (xy) either/both. May optionally specify "+V" to include Validation dataset')
 
     out = train.add_argument_group(title='Output Options')
-    out.add_argument('--model-file', default='model.ptl', help='The file name of the output model. Default is model.ptl')
-    out.add_argument('--epochs-log', default='epochs.csv', help='Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv')
-    out.add_argument('--args-log', help='Specify a yaml filename. Includes all user-specified and default training parameters.')
+    out.add_argument('--outdir', default='training-output/{TRAINING_ID}', help='Default is "training-output/{TRAINING_ID}"')
+    out.add_argument('--model-id', default='{TRAINING_ID}', help='Set a specific model id. Patterns {date} and {TRAINING_ID} are recognized. Default is "{TRAINING_ID}"')
+    out.add_argument('--epochs-log', metavar='ELOG', default='epochs.csv', help='Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv')
+    out.add_argument('--args-log', metavar='ALOG', help='Specify a yaml filename. Includes all user-specified and default training parameters.')
     out.add_argument('--results',  dest='result_files', metavar=('FNAME','SERIES'), nargs='+', action='append', default=[],
                      help='FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats. Default is "results.json". '
-                          'SERIES: Options are: image_basenames, image_fullpaths, output_ranks, output_fullranks, confusion_matrix. class_labels, input_classes, output_classes are always included by default. '
-                          '--results may be specified multiple times in order to create different files. If not invoked, default is "results.json image_basenames"')
+                          'SERIES: Options are: image_basenames, image_fullpaths, output_ranks, output_classranks, confusion_matrix. class_labels, input_classes, output_classes are always included by default. '
+                          '--results may be specified multiple times in order to create different files. If not invoked, default is "results.json image_basenames output_ranks"')
     #out.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
     #optim = train.add_argument_group(title='Optimization', description='Adjust learning hyper parameters')
@@ -266,16 +295,17 @@ if __name__ == '__main__':
     #optim.add_argument('--batch-norm', help='i forget what this is exactly rn')
 
     ## Run Vars ##
+    run.add_argument('RUN_ID', help='Run ID. Used by --outdir')
     run.add_argument('MODEL', help='Path to a previously-trained model file')
     run.add_argument('SRC', help='Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. Directories are accessed recursively')
-    run.add_argument('OUTDIR', help='Set output directory.')
 
     run.add_argument('--type', dest='src_type', default='bin', choices=['bin','img'], help='File type to perform classification on. Defaults is "bin"')
-    run_outfile = run.add_argument('--outfile', default="{bin}_class_v2.h5",
-        help='''Name/pattern of the output classification file. 
-                If TYPE==bin, "{bin}" in OUTFILE will be replaced with the bin id on a per-bin basis.
-                A few output file formats are recognized: .csv, .mat, and .h5 (hdf).
-                Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "img_results.csv".
+    run.add_argument('--outdir', default='run-output/{RUN_ID}',help='Default is "run-output/{RUN_ID}"')
+    run.add_argument('--outfile', default=[], action='append',
+        help='''Name/pattern of the output classification file.
+                If TYPE==bin, files are created on a per-bin basis. OUTFILE must include "{bin}", which will be replaced with the a bin's id.
+                A few output file formats are recognized: .json, .mat, and .h5 (hdf).
+                Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "img_results.json".
              ''') # TODO? If TYPE==img, "{dir}" in OUTFILE will be replaced with the parent directory of classified images."
     run.add_argument('--filter', nargs='+', metavar=('IN|OUT','KEYWORD'),
         help='Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. KEYWORD may also be a text file containing KEYWORDs, line-deliminated.')
@@ -283,25 +313,21 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    # CORRECTIONS AND CHECKS
-    if args.cmd_mode=='RUN':
-        # change default text of OUTFILE if TYPE==img
-        if args.src_type=='img' and args.outfile==run_outfile.default:
-            args.outfile = 'img_results.csv'
-        if args.filter:
-            if not args.filter[0] in ['IN','OUT']:
-                argparse.ArgumentTypeError('IN|OUT must be either "IN" or "OUT"')
-            if len(args.filter)<2:
-                argparse.ArgumentTypeError('Must be at least one KEYWORD')
+    # add timestamp
+    args.cmd_timestamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')
 
+    # add version tag
+    try:
+        with open('version') as f:
+            args.version = f.read().strip()
+    except FileNotFoundError:
+        args.version = None
     main(args)
 
-# TODO (minor) run outfile using callbacks. better flexibility
 # TODO (minor) move dataloaders to NeustonModel for auto-batch-size enabling
 # TODO (minor) utility script to fine img-norm MEAN STD
-# TODO (minor) bin script for connecting to hpc, connecting to a gpu, enabling conda env, and moving to working directory
 # TODO run on larger, current dataset using class-config
-# TODO implement running on images
 # TODO implement plots (matplotlib vs plotly?)
 # TODO implement hpc/slurm utility script (test-tube)
 # TODO dupes autorunner via hpc/slurm utility^
+# update conda env: conda env update -f environment.yml --prune

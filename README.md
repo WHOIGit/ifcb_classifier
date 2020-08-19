@@ -46,12 +46,11 @@ Created Model and validation results will be saved under `OUTDIR` as `model.ptl`
 conda activate ifcbnn
 
 ## PARAMS ##
+TRAIN_ID=ExampleTrainingID
 MODEL=inception_v3
 DATASET=training-data/ExampleTrainingData
-OUTDIR=training-output/ExampleTrainingResults
-mkdir -vp "$OUTDIR"
 
-python ./neuston_net.py TRAIN "$MODEL" "$DATASET" "$OUTDIR" 
+python ./neuston_net.py TRAIN "$TRAIN_ID" "$MODEL" "$DATASET"
 
 ```
 Here are the default behaviors for the above command.
@@ -60,21 +59,23 @@ Here are the default behaviors for the above command.
 * By default there is no data-augmentation. See `--flip`
 * `MODEL` is pretrained and fully trainable. The output layer is automatically adjusted for the number of classes as determined by `DATASET` options.
 * Epochs are limited to 10-60 epochs, with an early stopping criteria of 10 non-improving validation epochs. See `--emax` `--emin` `--estop`
-* The command will output the following files to `OUTDIR`: 
-  * model.ptl - The trained output model file. See `--model_file` flag
+* The command will output the following files to `training-output/TRAINING_ID` (see `--outdir`): 
+  * TRAINING_ID.ptl - The trained output model file. See `--model-id` flag
   * results.json - The results of the best validation epoch. See `--results` flag 
   * epochs.csv - a table of training_loss, validation_loss, and f1 scores for each epoch.
  
 Below is the full set of options for the TRAIN command.
 ```sh
-usage: neuston_net.py TRAIN [-h] [--untrain] [--img-norm MEAN STD] [--seed SEED] [--split T:V] [--class-config CSV COL] [--class-min MIN] [--emax MAX] [--emin MIN] [--estop STOP] [--flip {x,y,xy,x+V,y+V,xy+V}]
-                            [--model-file MODEL_FILE] [--epochs-log EPOCHS_LOG] [--args-log ARGS_LOG] [--results FNAME [SERIES ...]]
-                            MODEL SRC OUTDIR
+usage: neuston_net.py TRAIN [-h] [--untrain] [--img-norm MEAN STD] [--seed SEED] [--split T:V] [--class-config CSV COL]
+                            [--class-min MIN] [--emax MAX] [--emin MIN] [--estop STOP] [--flip {x,y,xy,x+V,y+V,xy+V}]
+                            [--outdir OUTDIR] [--model-id MODEL_ID] [--epochs-log EPOCHS_LOG] [--args-log ARGS_LOG]
+                            [--results FNAME [SERIES ...]]
+                            TRAINING_ID MODEL SRC
 
 positional arguments:
+  TRAINING_ID           Training ID. This value is the default value used by --outdir and --model-id.
   MODEL                 Select a base model. Eg: "inception_v3"
   SRC                   Directory with class-label subfolders and images
-  OUTDIR                Set output directory.
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -102,15 +103,17 @@ Augmentation Options:
                         Training images have 50% chance of being flipped along the designated axis: (x) vertically, (y) horizontally, (xy) either/both. May optionally specify "+V" to include Validation dataset
 
 Output Options:
-  --model-file MODEL_FILE
-                        The file name of the output model. Default is model.ptl
-  --epochs-log EPOCHS_LOG
-                        Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv
-  --args-log ARGS_LOG   Specify a yaml filename. Includes all user-specified and default training parameters.
+  --outdir OUTDIR       Default is "training-output/{TRAINING_ID}"
+  --model-id ID         Default is "{date}__{TRAINING_ID}"
+  --epochs-log ELOG     Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv
+  --args-log ALOG       Specify a yaml filename. Includes all user-specified and default training parameters.
   --results FNAME [SERIES ...]
-                        FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats. Default is "results.json". SERIES: Options are: image_basenames,
-                        image_fullpaths, output_ranks, output_fullranks, confusion_matrix. class_labels, input_classes, output_classes are always included by default. --results may be specified multiple times in order to
-                        create different files. If not invoked, default is "results.json image_basenames"
+                        FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". 
+                               Accepts .json .h5 and .mat file formats. Default is "results.json". 
+                        SERIES: Options are: image_basenames, image_fullpaths, output_ranks, output_classranks, confusion_matrix. 
+                                class_labels, input_classes, output_classes are always included by default. 
+                        --results may be specified multiple times in order to create different files. 
+                        If not invoked, default is "results.json image_basenames output_ranks"
 
 ```
 ## Model Running
@@ -119,37 +122,40 @@ Output Options:
 conda activate ifcbnn
 
 ## PARAMS ##
+RUN_ID=ExampleRunID
 MODEL=training-output/TrainedExample/model.ptl
 DATASET=run-data/ExampleDataset
-OUTDIR=run-output/ExampleRunResults
-mkdir -vp "$OUTDIR"
 
-python ./neuston_net.py RUN "$MODEL" "$DATASET" "$OUTDIR"
+python ./neuston_net.py "$RUN_ID" "$MODEL" "$DATASET"
 
 ```
 Here are the default behaviors for the above command.
 * `DATASET` is assumed to be the path a directory containing bins. To instead operate on images directly, set `--type img`
 * `MODEL` is the filepath a previously trained model file. 
-* The command will output the following files to `OUTDIR`:
+* The command will output the following files to `run-output/RUN_ID` (see `--outdir`):
   * {bin}_class_v2.h5 - Classification result datafiles on a per bin basis, where `{bin}` is replaced by a given bin's ID. Several output formats are available, see `--outfile`
 
 Additional flags for neuson_net.py RUN
 ```sh
-## Defaults ##
-usage: neuston_net.py RUN [-h] [--type {bin,img}] [--outfile OUTFILE]  [--filter IN|OUT KEYWORD [KEYWORD ...]] MODEL SRC OUTDIR
+usage: neuston_net.py RUN [-h] [--type {bin,img}] [--outdir OUTDIR] [--outfile OUTFILE] [--filter IN|OUT [KEYWORD ...]]
+                          RUN_ID MODEL SRC
 
 positional arguments:
-  MODEL              Path to a previously-trained model file
-  SRC                Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. Directories are accessed recursively
-  OUTDIR             Set output directory.
+  RUN_ID                Run ID. Used by --outdir
+  MODEL                 Path to a previously-trained model file
+  SRC                   Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. Directories are
+                        accessed recursively
 
 optional arguments:
-  -h, --help         show this help message and exit
-  --type {bin,img}   File type to perform classification on. Defaults is "bin"
-  --outfile OUTFILE  Name/pattern of the output classification file. If TYPE==bin, "{bin}" in OUTFILE will be replaced with the bin id on a per-bin basis. If TYPE==img, "{dir}" in OUTFILE will be replaced with the parent
-                     directory of classified images. A few output file formats are recognized: .csv, .mat, and .h5 (hdf). Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "{dir}.csv".
-  --filter IN|OUT KEYWORD [KEYWORD ...]
-                        Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. KEYWORD may also be a text file containing KEYWORDs, line-deliminated.
+  -h, --help            show this help message and exit
+  --type {bin,img}      File type to perform classification on. Defaults is "bin"
+  --outdir OUTDIR       Default is "run-output/{RUN_ID}"
+  --outfile OUTFILE     Name/pattern of the output classification file. If TYPE==bin, "{bin}" in OUTFILE will be replaced with
+                        the bin id on a per-bin basis. A few output file formats are recognized: .csv, .mat, and .h5 (hdf).
+                        Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "img_results.csv".
+  --filter IN|OUT [KEYWORD ...]
+                        Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. KEYWORD may also be a text
+                        file containing KEYWORDs, line-deliminated.
 
 ```
 

@@ -1,20 +1,22 @@
 """a module for defining model architecture"""
 
 # built in imports
-import os
 import argparse
 
 # 3rd party imports
 import torch
 import torch.nn as nn
 from torch.optim import Adam
+from torch.nn.functional import softmax
 import torchvision.models as MODEL_MODULE
+from torchvision.models.inception import InceptionOutputs
 import pytorch_lightning as ptl
 from sklearn import metrics
 import numpy as np
 
 # project imports #
-from neuston_callbacks import save_class_scores
+from neuston_data import IfcbBinDataset
+
 
 def get_namebrand_model(model_name, num_o_classes, pretrained=False):
     if model_name == 'inception_v3':
@@ -43,22 +45,19 @@ def get_namebrand_model(model_name, num_o_classes, pretrained=False):
 
 
 class NeustonModel(ptl.LightningModule):
-    def __init__(self, args):
+    def __init__(self, hparams):
         super().__init__()
 
-        if isinstance(args,dict):
-            args = argparse.Namespace(**args)
-        self.args = args
-        self.hparams = args
+        if isinstance(hparams,dict):
+            hparams = argparse.Namespace(**hparams)
+        self.hparams = hparams
         self.criterion = nn.CrossEntropyLoss()
-        self.model = get_namebrand_model(args.MODEL, len(args.classes), args.pretrained)
+        self.model = get_namebrand_model(hparams.MODEL, len(hparams.classes), hparams.pretrained)
 
-        self.train_loss = None
+        # Instance Variables
         self.best_val_loss = np.inf
-        self.best_epoch = None
-        self.validation_outputs = None
-        self.validation_inputs = None
-        self.validation_input_srcs = None
+        self.best_epoch = 0
+        self.train_loss = None
 
     def configure_optimizers(self):
         return Adam(self.parameters(), lr=0.001)
@@ -78,68 +77,87 @@ class NeustonModel(ptl.LightningModule):
         return batch_loss
 
     # TRAINING #
+
     def training_step(self, batch, batch_nb):
         input_data, input_classes, input_src =  batch
         outputs = self.forward(input_data)
         batch_loss = self.loss(input_classes, outputs)
-        output_classes = torch.argmax(outputs.logits,dim=1)
+        outputs = outputs.logits if isinstance(outputs,InceptionOutputs) else outputs
+        output_classes = torch.argmax(outputs,dim=1)
         f1_w = metrics.f1_score(input_classes.cpu(), output_classes.cpu(), average='weighted')
-        return dict(loss=batch_loss, progress_bar={'f1_w':100*f1_w, 'best_ep':self.best_epoch})
+        f1_m = metrics.f1_score(input_classes.cpu(), output_classes.cpu(), average='macro')
+        return dict(loss=batch_loss, progress_bar={'f1_w':100*f1_w, 'f1_m':100*f1_m, 'best_ep':self.best_epoch})
 
     def training_epoch_end(self, steps):
-        epoch_loss = torch.stack([batch['loss'] for batch in steps]).sum()
-        self.train_loss = epoch_loss
-        return dict(loss=epoch_loss)
+        train_loss = torch.stack([batch['loss'] for batch in steps]).sum()
+        self.train_loss = train_loss
+        return dict(train_loss=train_loss)
 
     # Validation #
     def validation_step(self, batch, batch_idx):
         input_data, input_classes, input_src = batch
         outputs = self.forward(input_data)
-        batch_loss = self.loss(input_classes, outputs)
-        return dict(loss=batch_loss, outputs=outputs.cpu(), input_classes=input_classes.cpu(), input_srcs=input_src)
+        val_batch_loss = self.loss(input_classes, outputs)
+        outputs = outputs.logits if isinstance(outputs,InceptionOutputs) else outputs
+        outputs = softmax(outputs,dim=1)
+        return dict(val_batch_loss=val_batch_loss.cpu(),
+                    val_outputs=outputs.cpu(),
+                    val_input_classes=input_classes.cpu(),
+                    val_input_srcs=input_src)
 
     def validation_epoch_end(self, steps):
-        validation_loss = torch.stack([batch['loss'] for batch in steps]).sum()
+        validation_loss = torch.stack([batch['val_batch_loss'] for batch in steps]).sum()
         if validation_loss<self.best_val_loss:
             self.best_val_loss = validation_loss
             self.best_epoch = self.current_epoch
 
-        self.validation_outputs =  nn.functional.softmax(torch.cat([batch['outputs'] for batch in steps],dim=0),dim=1).numpy()
-        self.validation_inputs = input_classes = torch.cat([batch['input_classes'] for batch in steps],dim=0).numpy()
-        self.validation_input_srcs = [item for sublist in [batch['input_srcs'] for batch in steps] for item in sublist]  # flatten list
-        output_classes = np.argmax(self.validation_outputs, axis=1)
+        outputs = torch.cat([batch['val_outputs'] for batch in steps],dim=0).numpy()
+        output_classes = np.argmax(outputs, axis=1)
+        input_classes = torch.cat([batch['val_input_classes'] for batch in steps],dim=0).numpy()
+        input_srcs = [item for sublist in [batch['val_input_srcs'] for batch in steps] for item in sublist]
 
         f1_weighted = metrics.f1_score(input_classes, output_classes, average='weighted')
         f1_macro = metrics.f1_score(input_classes, output_classes, average='macro')
 
-        log = dict(epoch=self.current_epoch, best= self.best_epoch==self.current_epoch,
+        log = dict(epoch=self.current_epoch, best = self.best_epoch==self.current_epoch,
                    train_loss=self.train_loss, val_loss=validation_loss,
                    f1_macro=f1_macro, f1_weighted=f1_weighted)
 
-        #input_labels = [self.args.classes[c] for c in input_classes]
-        #output_labels = [self.args.classes[c] for c in output_classes]
-        #f1_perclass = metrics.f1_score(input_labels, output_labels, labels=self.args.classes, average=None)
-        #recall_perclass = metrics.recall_score(input_labels, output_labels, labels=self.args.classes, average=None)
-        #for i,c in enumerate(self.args.classes):
+        #input_labels = [self.hparams.classes[c] for c in input_classes]
+        #output_labels = [self.hparams.classes[c] for c in output_classes]
+        #f1_perclass = metrics.f1_score(input_labels, output_labels, labels=self.hparams.classes, average=None)
+        #recall_perclass = metrics.recall_score(input_labels, output_labels, labels=self.hparams.classes, average=None)
+        #for i,c in enumerate(self.hparams.classes):
         #    log['f1_'+c] = f1_perclass[i]
 
-        # todo save_class_scores()
-        return dict(val_loss=validation_loss, log=log)
+        return dict(val_loss=validation_loss, log=log,
+                    input_classes=input_classes, output_classes=output_classes,
+                    input_srcs=input_srcs, outputs=outputs)
 
     # RUNNING the model #
     def test_step(self, batch, batch_idx):
-        inputs,pids = batch
-        outputs = self.forward(inputs)
-        return dict(outputs=outputs.cpu(), pids=pids)
+        input_data, input_srcs = batch
+        outputs = self.forward(input_data)
+        outputs = outputs.logits if isinstance(outputs,InceptionOutputs) else outputs
+        outputs = softmax(outputs, dim=1)
+        return dict(test_outputs=outputs.cpu(), test_srcs=input_srcs)
 
     def test_epoch_end(self, steps):
+        outputs = torch.cat([batch['test_outputs'] for batch in steps],dim=0).numpy()
+        images = [batch['test_srcs'] for batch in steps]
+        images = [item for sublist in images for item in sublist]  # flatten list
+        dataset = self.test_dataloader().dataset
+        if isinstance(dataset, IfcbBinDataset):
+            bin_id = str(dataset.bin.pid)
+        else: bin_id = 'NaB'
+        rr = self.RunResults(inputs=images, outputs=outputs, bin_id=bin_id)
+        return dict(RunResults=rr)
 
-        outputs = torch.cat([batch['outputs'] for batch in steps],dim=0)
-        outputs = nn.functional.softmax(outputs,dim=1).numpy()
-        pids = [batch['pids'] for batch in steps]
-        pids = [item for sublist in pids for item in sublist]  # flatten list
-
-        bin_id = self.test_dataloader().dataset.bin.pid
-        os.makedirs(self.args.run_outdir,exist_ok=True)
-        outfile = os.path.join(self.args.run_outdir, self.args.run_outfile.format(bin=bin_id))
-        save_class_scores(outfile, bin_id, outputs, pids, self.args.classes)
+    class RunResults:
+        def __init__(self, inputs, outputs, bin_id):
+            self.inputs = inputs
+            self.outputs = outputs
+            self.bin_id = bin_id
+        def __repr__(self):
+            rep = 'Bin: {} ({} imgs)'.format(self.bin_id, len(self.inputs))
+            return repr(rep)
