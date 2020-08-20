@@ -14,17 +14,14 @@ This readme is written from the point of view of a WHOI user intent on installin
 Installation and Setup on HPC
 All installation commands are to be run from a terminal.
 `<user>` refers to your username (and password)
-`<DIR>` refers to the directory you choose to install into. “ifcb” is fine
 
 1. `ssh <user>@poseidon.whoi.edu`
 0. `cd $SCRATCH`
-0. `git clone https://github.com/WHOIGit/ifcb_classifier.git <DIR>`
-0. `cd <DIR>`
-0. `conda env create -f environment.yaml`
+0. `git clone https://github.com/WHOIGit/ifcb_classifier.git ifcbnn`
+0. `cd ifcbnn`
+0. `conda env create -f environment.yml`
     * If you get “conda: command not found”, the anaconda hpc Module may not be loaded. Do `module load anaconda` and try again.
-     * Make sure you also have cuda modules loaded:
-`module load cuda10.1/toolkit cuda10.1/cudnn/8 cuda10.1/blas cuda10.1/fft`
-    * You can ensure modules load when you login with `module initadd <themodule>`
+    * You can ensure modules load when you login with `module initadd anaconda`
 0. `conda activate ifcbnn`
     * If you get prompted with “`conda init <SHELL_NAME>`” select “`bash`” for your shell-name. You will have to log out of poseidon (`exit`), log back in, and navigate back to this DIR install directory.
 0. DONE! Your installation is ready to go. You can test that things were installed correctly by doing `python neuston_net.py --help`. The help screen/documentation should appear.
@@ -41,7 +38,7 @@ DATASETs are directories containing class-label subfolders. Images must be locat
 Training and Validation datasets are dynamically created from this one main DATASET folder.  
 
 ## Model Training
-Created Model and validation results will be saved under `OUTDIR` as `model.ptl`
+Created Model and validation results will be saved under `training-output/TRAIN_ID`. The model filetype is `.ptl`
 ```sh
 conda activate ifcbnn
 
@@ -50,7 +47,7 @@ TRAIN_ID=ExampleTrainingID
 MODEL=inception_v3
 DATASET=training-data/ExampleTrainingData
 
-python ./neuston_net.py TRAIN "$TRAIN_ID" "$MODEL" "$DATASET"
+python neuston_net.py TRAIN "$TRAIN_ID" "$MODEL" "$DATASET"
 
 ```
 Here are the default behaviors for the above command.
@@ -63,6 +60,7 @@ Here are the default behaviors for the above command.
   * TRAINING_ID.ptl - The trained output model file. See `--model-id` flag
   * results.json - The results of the best validation epoch. See `--results` flag 
   * epochs.csv - a table of training_loss, validation_loss, and f1 scores for each epoch.
+  * hparams.yml - a human-readable file with the training input parameters and metadata (these are automatically baked into the model file too)
  
 Below is the full set of options for the TRAIN command.
 ```sh
@@ -86,7 +84,8 @@ Model Adjustments:
 
 Dataset Adjustments:
   --seed SEED           Set a specific seed for deterministic output & dataset-splitting reproducability.
-  --split T:V           Ratio of images per-class to split randomly into Training and Validation datasets. Randomness affected by SEED. Default is "80:20"
+  --split T:V           Ratio of images per-class to split randomly into Training and Validation datasets. 
+                        Randomness affected by SEED. Default is "80:20"
   --class-config CSV COL
                         Skip and combine classes as defined by column COL of a special CSV configuration file
   --class-min MIN       Exclude classes with fewer than MIN instances. Default is 2
@@ -94,19 +93,22 @@ Dataset Adjustments:
 Epoch Parameters:
   --emax MAX            Maximum number of training epochs. Default is 60
   --emin MIN            Minimum number of training epochs. Default is 10
-  --estop STOP          Early Stopping: Number of epochs following a best-epoch after-which to stop training. Set STOP=0 to disable. Default is 10
+  --estop STOP          Early Stopping: Number of epochs following a best-epoch after-which to stop training. 
+                        Set STOP=0 to disable. Default is 10
 
 Augmentation Options:
   Data Augmentation is a technique by which training results may improved by simulating novel input
 
   --flip {x,y,xy,x+V,y+V,xy+V}
-                        Training images have 50% chance of being flipped along the designated axis: (x) vertically, (y) horizontally, (xy) either/both. May optionally specify "+V" to include Validation dataset
+                        Training images have 50% chance of being flipped along the designated axis: 
+                        (x) vertically, (y) horizontally, (xy) either/both. 
+                        May optionally specify "+V" to include Validation dataset
 
 Output Options:
   --outdir OUTDIR       Default is "training-output/{TRAINING_ID}"
   --model-id ID         Default is "{date}__{TRAINING_ID}"
   --epochs-log ELOG     Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv
-  --args-log ALOG       Specify a yaml filename. Includes all user-specified and default training parameters.
+  --args-log ALOG       Specify a yaml filename. Includes all user-specified and default training parameters. Default is hparams.yml
   --results FNAME [SERIES ...]
                         FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". 
                                Accepts .json .h5 and .mat file formats. Default is "results.json". 
@@ -126,7 +128,7 @@ RUN_ID=ExampleRunID
 MODEL=training-output/TrainedExample/model.ptl
 DATASET=run-data/ExampleDataset
 
-python ./neuston_net.py "$RUN_ID" "$MODEL" "$DATASET"
+python neuston_net.py RUN "$RUN_ID" "$MODEL" "$DATASET"
 
 ```
 Here are the default behaviors for the above command.
@@ -150,12 +152,13 @@ optional arguments:
   -h, --help            show this help message and exit
   --type {bin,img}      File type to perform classification on. Defaults is "bin"
   --outdir OUTDIR       Default is "run-output/{RUN_ID}"
-  --outfile OUTFILE     Name/pattern of the output classification file. If TYPE==bin, "{bin}" in OUTFILE will be replaced with
-                        the bin id on a per-bin basis. A few output file formats are recognized: .csv, .mat, and .h5 (hdf).
+  --outfile OUTFILE     Name/pattern of the output classification file. 
+                        If TYPE==bin, "{bin}" in OUTFILE will be replaced with the bin id on a per-bin basis. 
+                        A few output file formats are recognized: .json .mat .h5 (hdf).
                         Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "img_results.csv".
   --filter IN|OUT [KEYWORD ...]
-                        Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. KEYWORD may also be a text
-                        file containing KEYWORDs, line-deliminated.
+                        Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. 
+                        KEYWORD may also be a text file containing KEYWORDs, line-deliminated.
 
 ```
 

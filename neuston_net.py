@@ -331,3 +331,6 @@ if __name__ == '__main__':
 # TODO implement hpc/slurm utility script (test-tube)
 # TODO dupes autorunner via hpc/slurm utility^
 # update conda env: conda env update -f environment.yml --prune
+# Quick hpc access: ssh poseidon; ./gpu_ifcbnn.sh
+# TODO unittests?
+#T=iv3_test;R=iv3_test_run;time ./neuston_net.py TRAIN $T inception_v3 training-data/testset --class-config training-data/testset.config.csv col1 --class-min 10 --results results.json image_basenames output_ranks --results results.mat image_basenames output_ranks --results results.h5 image_basenames output_ranks && time ./neuston_net.py RUN $R training-output/$T/$T.ptl run-data/testset --outfile hdf/{bin}.h5 --outfile mat/{bin}.mat --outfile json/{bin}.json
