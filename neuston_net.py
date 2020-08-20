@@ -54,7 +54,7 @@ def do_training(args):
     # Setup Callbacks
     validation_results_callbacks = []
     plotting_callbacks = [] # TODO
-    if not args.result_files: args.result_files = [['results.json','image_basenames','output_fullranks']]
+    if not args.result_files: args.result_files = [['results.json','image_basenames','output_scores']] #TODO expand this
     for result_file in args.result_files:
         svr = SaveValidationResults(outdir=args.outdir, outfile=result_file[0], series=result_file[1:])
         validation_results_callbacks.append(svr)
@@ -283,8 +283,8 @@ if __name__ == '__main__':
     out.add_argument('--args-log', metavar='ALOG', help='Specify a yaml filename. Includes all user-specified and default training parameters.')
     out.add_argument('--results',  dest='result_files', metavar=('FNAME','SERIES'), nargs='+', action='append', default=[],
                      help='FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats. Default is "results.json". '
-                          'SERIES: Options are: image_basenames, image_fullpaths, output_ranks, output_classranks, confusion_matrix. class_labels, input_classes, output_classes are always included by default. '
-                          '--results may be specified multiple times in order to create different files. If not invoked, default is "results.json image_basenames output_ranks"')
+                          'SERIES: Options are: image_basenames, image_fullpaths, output_scores, output_winscores, confusion_matrix. class_labels, input_classes, output_classes are always included by default. '
+                          '--results may be specified multiple times in order to create different files. If not invoked, default is "results.json image_basenames output_scores"')
     #out.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
     #optim = train.add_argument_group(title='Optimization', description='Adjust learning hyper parameters')
@@ -333,4 +333,4 @@ if __name__ == '__main__':
 # update conda env: conda env update -f environment.yml --prune
 # Quick hpc access: ssh poseidon; ./gpu_ifcbnn.sh
 # TODO unittests?
-#T=iv3_test;R=iv3_test_run;time ./neuston_net.py TRAIN $T inception_v3 training-data/testset --class-config training-data/testset.config.csv col1 --class-min 10 --results results.json image_basenames output_ranks --results results.mat image_basenames output_ranks --results results.h5 image_basenames output_ranks && time ./neuston_net.py RUN $R training-output/$T/$T.ptl run-data/testset --outfile hdf/{bin}.h5 --outfile mat/{bin}.mat --outfile json/{bin}.json
+#T=iv3_test;R=iv3_test_run;time ./neuston_net.py TRAIN $T inception_v3 training-data/testset --class-config training-data/testset.config.csv col1 --class-min 10 --results results.json image_basenames output_scores --results results.mat image_basenames output_scores --results results.h5 image_basenames output_scores && time ./neuston_net.py RUN $R training-output/$T/$T.ptl run-data/testset --outfile hdf/{bin}.h5 --outfile mat/{bin}.mat --outfile json/{bin}.json
