@@ -54,7 +54,8 @@ def do_training(args):
     # Setup Callbacks
     validation_results_callbacks = []
     plotting_callbacks = [] # TODO
-    if not args.result_files: args.result_files = [['results.json','image_basenames','output_scores']] #TODO expand this
+    if not args.result_files:
+        args.result_files = ['results.mat image_basenames output_scores counts_perclass confusion_matrix f1_perclass f1_weighted f1_macro'.split()]
     for result_file in args.result_files:
         svr = SaveValidationResults(outdir=args.outdir, outfile=result_file[0], series=result_file[1:])
         validation_results_callbacks.append(svr)
@@ -280,12 +281,19 @@ if __name__ == '__main__':
     out.add_argument('--outdir', default='training-output/{TRAINING_ID}', help='Default is "training-output/{TRAINING_ID}"')
     out.add_argument('--model-id', default='{TRAINING_ID}', help='Set a specific model id. Patterns {date} and {TRAINING_ID} are recognized. Default is "{TRAINING_ID}"')
     out.add_argument('--epochs-log', metavar='ELOG', default='epochs.csv', help='Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv')
-    out.add_argument('--args-log', metavar='ALOG', help='Specify a yaml filename. Includes all user-specified and default training parameters.')
+    out.add_argument('--args-log', metavar='ALOG', default='args.yml', help='Specify a human-readable yaml filename. Includes all user-specified and default training parameters. Default is args.yml')
     out.add_argument('--results',  dest='result_files', metavar=('FNAME','SERIES'), nargs='+', action='append', default=[],
-                     help='FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats. Default is "results.json". '
-                          'SERIES: Options are: image_basenames, image_fullpaths, output_scores, output_winscores, confusion_matrix. class_labels, input_classes, output_classes are always included by default. '
-                          '--results may be specified multiple times in order to create different files. If not invoked, default is "results.json image_basenames output_scores"')
+                     help='FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats.'
+                          'SERIES: Data to include in FNAME. The following are always included and need not be specified: model_id, timestamp, class_labels, input_classes, output_classes.'
+                          '    Options are: image_basenames, image_fullpaths; output_scores, output_winscores; confusion_matrix (ordered by classes_by_recall);'
+                          '                 classes_by_{count|f1|recall|precision}; {f1|recall|precision}_{macro|weighted|perclass}; {counts|val_counts|train_counts}_perclass.'
+                          '--results may be specified multiple times in order to create different files. '
+                          'If not invoked, default is "results.mat image_basenames output_scores counts_perclass confusion_matrix f1_perclass f1_weighted f1_macro"')
     #out.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
+
+    meta = train.add_argument_group(title='Metadata and Annotations')
+    meta.add_argument('--dataset-id', help='Associate a dataset id label with this model')
+    meta.add_argument('--notes', help='Add any kind of note to the trained model. Make sure to use quotes "around your message."')
 
     #optim = train.add_argument_group(title='Optimization', description='Adjust learning hyper parameters')
     #optim.add_argument('--optimizer', default='Adam', choices=['Adam'], help='Select and optimizer. Default is Adam')

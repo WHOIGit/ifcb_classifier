@@ -9,6 +9,7 @@ import h5py as h5
 import numpy as np
 import pytorch_lightning as ptl
 from scipy.io import savemat
+from sklearn import metrics
 
 # project imports
 import ifcb
@@ -25,37 +26,79 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
         self.best_only = best_only
 
     def on_validation_end(self, trainer, pl_module):
+        log = trainer.callback_metrics # flattened dict
+        #log: val_loss input_classes output_classes input_srcs outputs best epoch train_loss f1_macro f1_weighted loss f1_w f1_m best_ep'
+
+        if not(log['best'] or not self.best_only):
+            return
+
         curr_epoch = pl_module.current_epoch
         class_labels = pl_module.hparams.classes
+        class_idxs = list(range(len(class_labels)))
 
-        # TODO make sure this works as expected??
-        log = trainer.callback_metrics # flattened dict
-        #log: dict(val_loss input_classes output_classes input_srcs outputs best)
-        #val_loss input_classes output_classes input_srcs outputs epoch best train_loss f1_macro f1_weighted loss f1_w f1_m best_ep'
+        val_dataset = pl_module.val_dataloader().dataset
+        train_dataset = pl_module.train_dataloader().dataset
+        val_counts_perclass = val_dataset.count_perclass
+        train_counts_perclass = train_dataset.count_perclass
+        counts_perclass = [vcount+tcount for vcount,tcount in zip(val_counts_perclass, train_counts_perclass)] # element-wise addition
 
         output_scores = log['outputs']
-        image_fullpaths = log['input_srcs']
-
         output_winscores = np.max(output_scores, axis=1)
         output_classes = np.argmax(output_scores, axis=1)
+        input_classes = log['input_classes']
+        image_fullpaths = log['input_srcs']
         image_basenames = [os.path.splitext(os.path.basename(img))[0] for img in image_fullpaths]
-        confusion_matrix = None #TODO confusion_matrix, also must include recall-ordered class list (attrib for h5)
 
-        assert output_scores.shape[0] == len(log['input_classes']), 'wrong number inputs-to-outputs'
+        assert output_scores.shape[0] == len(input_classes), 'wrong number inputs-to-outputs'
         assert output_scores.shape[1] == len(class_labels), 'wrong number of class labels'
 
+        # STATS!
+        stats = dict()
+        for mode in ['weighted','macro', None]:
+            for stat in ['f1','recall','precision']:
+                metric = getattr(metrics,stat+'_score')(input_classes,output_classes,labels=class_idxs,average=mode)
+                label = '{}_{}'.format(stat,mode if mode else 'perclass')
+                stats[label] = metric  # f1|recall|precision _ macro|weighted|perclass
+
+        # Classes order by some Stat
+        classes_by = dict()
+        classes_by['count'] = sorted(class_idxs, key=lambda idx: (counts_perclass[idx]), reverse=True) #higher is better
+        for stat in ['f1','recall','precision']:
+            classes_by[stat] = sorted(class_idxs, key=lambda idx: (stats[stat+'_perclass'][idx]), reverse=True)
+
+        # Confusion matrix
+        confusion_matrix = metrics.confusion_matrix(input_classes,output_classes,labels=classes_by['recall'], normalize=None)
+
+
+        ## PASSING IT DOWN TO OUTPUTS ##
+
+        # default values
         results = dict(model_id=pl_module.hparams.model_id,
                        timestamp=pl_module.hparams.cmd_timestamp,
                        class_labels=class_labels,
-                       input_classes=log['input_classes'],
+                       input_classes=input_classes,
                        output_classes=output_classes)
 
+        # optional values
         if 'image_fullpaths' in self.series: results['image_fullpaths'] = image_fullpaths
         if 'image_basenames' in self.series: results['image_basenames'] = image_basenames
         if 'output_winscores' in self.series: results['output_winscores'] = output_winscores
         if 'output_scores' in self.series: results['output_scores'] = output_scores
-        if 'confusion_matrix' in self.series : results['confusion_matrix'] = confusion_matrix
+        if 'confusion_matrix' in self.series :
+            results['confusion_matrix'] = confusion_matrix
+            results['classes_by_recall'] = classes_by['recall'] # always include with confusion matrix
+        if 'counts_perclass' in self.series: results['counts_perclass'] = counts_perclass
+        if 'val_counts_perclass' in self.series: results['val_counts_perclass'] = val_counts_perclass
+        if 'train_counts_perclass' in self.series: results['val_counts_perclass'] = val_counts_perclass
 
+        # optional stats and class_by's
+        for stat in stats: # eg f1_weighted, recall_perclass
+            if stat in self.series: results[stat] = stats[stat]
+        for stat in classes_by:
+            classes_by_stat = 'classes_by_'+stat
+            if classes_by_stat in self.series: results[classes_by_stat] = classes_by[stat]
+
+        # sendit!
         outfile = os.path.join(self.outdir,self.outfile).format(epoch=curr_epoch)
         if log['best'] or not self.best_only:
             os.makedirs(os.path.dirname(outfile), exist_ok=True)
@@ -67,32 +110,41 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
         if outfile.endswith('.h5'): self._save_validation_results_hdf(outfile,results)
 
     def _save_validation_results_json(self,outfile,results):
-        for np_series in ['input_classes','output_classes','output_scores','output_winscores','confusion_matrix']:
-            if np_series in results: results[np_series] = results[np_series].tolist()
+        for series in results: # numpy vals
+            if isinstance(results[series], np.ndarray): results[series] = results[series].tolist()
         with open(outfile, 'w') as f:
             json.dump(results, f)
 
     def _save_validation_results_mat(self,outfile,results):
-        for idx_series in ['input_classes','output_classes']:
-            # matlab is not zero-indexed, so lets increment all the indicies by 1 >.>
-            if idx_series in results:
-                results[idx_series] = results[idx_series].astype('u4') + 1
+        # index ints
+        idx_data =['input_classes','output_classes']
+        idx_data.extend( ['classes_by_'+stat for stat in 'f1 recall precision count'.split()] )
+        str_data = ['class_labels','image_fullpaths','image_basenames']
 
-        for float_series in ['output_scores', 'output_winscores', 'confusion_matrix']:
-            if float_series in results: results[float_series] = results[float_series].astype('f4')
-        for str_series in ['class_labels','image_fullpaths','image_basenames']:
-            if str_series in results: results[str_series] = np.asarray(results[str_series], dtype='object')
+        for series in results:
+            if isinstance(results[series], np.ndarray): results[series] = results[series].astype('f4')
+            elif isinstance(results[series], np.float64): results[series] = results[series].astype('f4')
+            elif series in str_data: results[series] = np.asarray(results[series], dtype='object')
+            elif series in idx_data: results[series] = np.asarray(results[series]).astype('u4') + 1
+            # matlab is not zero-indexed, so increment all the indicies by 1
+
         savemat(outfile, results, do_compression=True)
 
     def _save_validation_results_hdf(self,outfile,results):
+        attrib_data = ['model_id', 'timestamp']
+        attrib_data += 'f1_weighted recall_weighted precision_weighted f1_macro recall_macro precision_macro'.split()
+        int_data = ['input_classes', 'output_classes'] + 'counts_perclass val_counts_perclass train_counts_perclass'.split()
+        int_data.extend(['classes_by_'+stat for stat in 'f1 recall precision count'.split()])
+        string_data = ['class_labels', 'image_fullpaths', 'image_basenames']
         with h5.File(outfile, 'w') as f:
             meta = f.create_dataset('metadata', data=h5.Empty('f'))
-            meta.attrs['model_id'] = results['model_id']
-            meta.attrs['timestamp'] = results['timestamp']
-            for num_series in ['input_classes','output_classes','output_scores', 'output_winscores', 'confusion_matrix']:
-                if num_series in results:f.create_dataset(num_series, data=results[num_series], compression='gzip', dtype='float16')
-            for str_series in ['class_labels','image_fullpaths','image_basenames']:
-                if str_series in results: f.create_dataset(str_series, data=np.string_(results[str_series]), compression='gzip', dtype=h5.string_dtype())
+            for series in results:
+                if series in attrib_data: meta.attrs[series] = results[series]
+                elif series in string_data: f.create_dataset(series, data=np.string_(results[series]), compression='gzip', dtype=h5.string_dtype())
+                elif series in int_data: f.create_dataset(series, data=results[series], compression='gzip', dtype='int16')
+                elif isinstance(results[series],np.ndarray):
+                    f.create_dataset(series, data=results[series], compression='gzip', dtype='float16')
+                else: print('hdf results: WE MISSED THIS ONE:',series)
 
 
 ## Running ##

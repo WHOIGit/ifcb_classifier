@@ -57,6 +57,13 @@ class NeustonDataset(Dataset):
             ipc[self.classes[trg]].append(img)
         return ipc
 
+    @property
+    def count_perclass(self):
+        cpc = [0 for c in self.classes] # initialize list at 0-counts
+        for class_idx in self.targets:
+            cpc[class_idx] += 1
+        return cpc
+
     def split(self, ratio1, ratio2, seed=None, minimum_images_per_class='scale'):
         assert ratio1+ratio2 == 100
         d1_perclass = {}
