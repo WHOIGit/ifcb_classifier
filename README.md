@@ -111,12 +111,17 @@ Output Options:
   --args-log ALOG       Specify a yaml filename. Includes all user-specified and default training parameters. Default is hparams.yml
   --results FNAME [SERIES ...]
                         FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". 
-                               Accepts .json .h5 and .mat file formats. Default is "results.json". 
-                        SERIES: Options are: image_basenames, image_fullpaths, output_ranks, output_classranks, confusion_matrix. 
-                                class_labels, input_classes, output_classes are always included by default. 
+                               Accepts .json .h5 and .mat file formats.
+                        SERIES: Data to include in FNAME. The following are always included and need not be specified: 
+                                model_id, timestamp, class_labels, input_classes, output_classes.
+                                Options are: image_basenames image_fullpaths
+                                             output_scores output_winscores 
+                                             confusion_matrix (ordered by classes_by_recall),
+                                             classes_by_{count|f1|recall|precision}
+                                             {f1|recall|precision}_{macro|weighted|perclass} 
+                                             {counts|val_counts|train_counts}_perclass
                         --results may be specified multiple times in order to create different files. 
-                        If not invoked, default is "results.json image_basenames output_ranks"
-
+                        If not invoked, default is: "results.mat image_basenames output_scores counts_perclass confusion_matrix f1_perclass f1_weighted f1_macro"
 ```
 ## Model Running
 
@@ -125,7 +130,7 @@ conda activate ifcbnn
 
 ## PARAMS ##
 RUN_ID=ExampleRunID
-MODEL=training-output/TrainedExample/model.ptl
+MODEL=training-output/TrainedExample/TrainedExample.ptl
 DATASET=run-data/ExampleDataset
 
 python neuston_net.py RUN "$RUN_ID" "$MODEL" "$DATASET"
