@@ -155,13 +155,12 @@ class NeustonDataset(Dataset):
         return cpc
 
     def split(self, ratio1, ratio2, seed=None, minimum_images_per_class='scale'):
-        assert ratio1+ratio2 == 100
+        assert ratio1+ratio2 == 100, 'ratio1:ratio2 must sum to 100, instead got {}:{} (total: {})'.format(ratio1,ratio2,ratio1+ratio2)
         d1_perclass = {}
         d2_perclass = {}
         for class_label, images in self.images_perclass.items():
             #1) determine output lengths
             d1_len = int(ratio1*len(images)/100+0.5)
-            d2_len = len(images)-d1_len  # not strictly needed
             if d1_len == len(images) and self.minimum_images_per_class>1:
             # make sure that at least one image gets put in d2
                 d1_len -= 1
@@ -177,20 +176,11 @@ class NeustonDataset(Dataset):
             d1_perclass[class_label] = d1_images
             d2_perclass[class_label] = d2_images
 
-        #4) calculate minimum_images_per_class for thresholding
-        if minimum_images_per_class == 'scale':
-            d1_threshold = int(self.minimum_images_per_class*ratio1/100+0.5) or 1
-            d2_threshold = self.minimum_images_per_class-d1_threshold or 1
-        elif isinstance(minimum_images_per_class,int):
-            d1_threshold = d2_threshold = minimum_images_per_class
-        else:
-            d1_threshold = d2_threshold = self.minimum_images_per_class
-
-        #5) create and return new datasets
-        dataset1 = NeustonDataset(src=self.src, images_perclass=d1_perclass, transforms=self.transforms, minimum_images_per_class=d1_threshold)
-        dataset2 = NeustonDataset(src=self.src, images_perclass=d2_perclass, transforms=self.transforms, minimum_images_per_class=d2_threshold)
-        assert dataset1.classes == dataset2.classes  # possibly fails due to edge case thresholding?
-        assert len(dataset1)+len(dataset2) == len(self)  # make sure we don't lose any images somewhere
+        #4) create and return new datasets
+        dataset1 = NeustonDataset(src=self.src, images_perclass=d1_perclass, transforms=self.transforms)
+        dataset2 = NeustonDataset(src=self.src, images_perclass=d2_perclass, transforms=self.transforms)
+        assert dataset1.classes == dataset2.classes, 'd1-d2_classes:{}, d2-d1_classes:{}'.format(set(dataset1.classes)-set(dataset2.classes), set(dataset2.classes)-set(dataset1.classes))  # possibly fails due to edge case thresholding?
+        assert len(dataset1)+len(dataset2) == len(self), 'd1_len:{}, d2_len:{}'.format(len(dataset1),len(dataset2))  # make sure we don't lose any images somewhere
         return dataset1, dataset2
 
     @classmethod

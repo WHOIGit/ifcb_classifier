@@ -27,7 +27,8 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
 
     def on_validation_end(self, trainer, pl_module):
         log = trainer.callback_metrics # flattened dict
-        #log: val_loss input_classes output_classes input_srcs outputs best epoch train_loss f1_macro f1_weighted loss f1_w f1_m best_ep'
+        del log['loss']  # it's from the last training STEP and non-cumulative
+        #log: val_loss input_classes output_classes input_srcs outputs epoch best train_loss f1_macro f1_weighted
 
         if not(log['best'] or not self.best_only):
             return

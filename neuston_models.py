@@ -57,7 +57,7 @@ class NeustonModel(ptl.LightningModule):
         # Instance Variables
         self.best_val_loss = np.inf
         self.best_epoch = 0
-        self.train_loss = None
+        self.agg_train_loss = 0.0
 
     def configure_optimizers(self):
         return Adam(self.parameters(), lr=0.001)
@@ -77,20 +77,17 @@ class NeustonModel(ptl.LightningModule):
         return batch_loss
 
     # TRAINING #
-
     def training_step(self, batch, batch_nb):
         input_data, input_classes, input_src =  batch
         outputs = self.forward(input_data)
         batch_loss = self.loss(input_classes, outputs)
-        outputs = outputs.logits if isinstance(outputs,InceptionOutputs) else outputs
-        output_classes = torch.argmax(outputs,dim=1)
-        f1_w = metrics.f1_score(input_classes.cpu(), output_classes.cpu(), average='weighted')
-        f1_m = metrics.f1_score(input_classes.cpu(), output_classes.cpu(), average='macro')
-        return dict(loss=batch_loss, progress_bar={'f1_w':100*f1_w, 'f1_m':100*f1_m, 'best_ep':self.best_epoch})
+        self.agg_train_loss += batch_loss.item()
+        return dict(loss=batch_loss)
 
     def training_epoch_end(self, steps):
-        train_loss = torch.stack([batch['loss'] for batch in steps]).sum()
-        self.train_loss = train_loss
+        train_loss = torch.stack([batch['loss'] for batch in steps]).sum().item()
+        #print('training_epoch_end: self.agg_train_loss={:.5f}, train_loss={:.5f}, DIFF={:.9f}'.format(self.agg_train_loss, train_loss, self.agg_train_loss-train_loss), end='\n\n')
+        self.agg_train_loss = 0.0
         return dict(train_loss=train_loss)
 
     # Validation #
@@ -106,9 +103,16 @@ class NeustonModel(ptl.LightningModule):
                     val_input_srcs=input_src)
 
     def validation_epoch_end(self, steps):
+        print(end='\n\n') # give space for progress bar
+        if self.current_epoch==0: self.best_val_loss = np.inf  # takes care of any lingering val_loss from sanity checks
+
         validation_loss = torch.stack([batch['val_batch_loss'] for batch in steps]).sum()
-        if validation_loss<self.best_val_loss:
-            self.best_val_loss = validation_loss
+        #eoe0 = 'validation_epoch_end: best_val_loss={}, curr_val_loss={}, curr<best={}, curr-best (neg is good)={}'
+        #eoe0 = eoe0.format(self.best_val_loss, validation_loss.item(), validation_loss.item()<self.best_val_loss, validation_loss.item()-self.best_val_loss)
+        #print(eoe0)
+
+        if validation_loss.item()<self.best_val_loss:
+            self.best_val_loss = validation_loss.item()
             self.best_epoch = self.current_epoch
 
         outputs = torch.cat([batch['val_outputs'] for batch in steps],dim=0).numpy()
@@ -120,15 +124,12 @@ class NeustonModel(ptl.LightningModule):
         f1_macro = metrics.f1_score(input_classes, output_classes, average='macro')
 
         log = dict(epoch=self.current_epoch, best = self.best_epoch==self.current_epoch,
-                   train_loss=self.train_loss, val_loss=validation_loss,
+                   train_loss=self.agg_train_loss, val_loss=validation_loss,
                    f1_macro=f1_macro, f1_weighted=f1_weighted)
 
-        #input_labels = [self.hparams.classes[c] for c in input_classes]
-        #output_labels = [self.hparams.classes[c] for c in output_classes]
-        #f1_perclass = metrics.f1_score(input_labels, output_labels, labels=self.hparams.classes, average=None)
-        #recall_perclass = metrics.recall_score(input_labels, output_labels, labels=self.hparams.classes, average=None)
-        #for i,c in enumerate(self.hparams.classes):
-        #    log['f1_'+c] = f1_perclass[i]
+        eoe = 'Best Epoch: {}, train_loss: {:.3f}, val_loss: {:.3f}, val_f1_w={:02.1f}%, val_f1_m={:02.1f}%'
+        eoe = eoe.format(True if self.current_epoch==self.best_epoch else self.best_epoch+1, self.agg_train_loss, validation_loss, 100*f1_weighted, 100*f1_macro)
+        print(eoe, flush=True, end='\n\n')  # so slurm output can be followed along
 
         return dict(val_loss=validation_loss, log=log,
                     input_classes=input_classes, output_classes=output_classes,

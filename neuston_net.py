@@ -53,9 +53,9 @@ def do_training(args):
 
     # Setup Callbacks
     callbacks=[]
+    plotting_callbacks = [] # TODO
 
     validation_results_callbacks = []
-    plotting_callbacks = [] # TODO
     if not args.result_files:
         args.result_files = ['results.mat image_basenames output_scores counts_perclass confusion_matrix f1_perclass f1_weighted f1_macro'.split()]
     for result_file in args.result_files:
@@ -93,6 +93,7 @@ def do_training(args):
                       early_stop_callback=EarlyStopping(patience=args.estop) if args.estop else False,
                       checkpoint_callback=ModelCheckpoint(filepath=chkpt_path),
                       callbacks=callbacks,
+                      #num_sanity_val_steps=0
                       )
 
     # Setup Model
