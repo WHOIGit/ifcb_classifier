@@ -20,35 +20,125 @@ from ifcb.data.stitching import InfilledImages
 
 class NeustonDataset(Dataset):
 
-    def __init__(self, src, minimum_images_per_class=1, transforms=None, images_perclass=None):
+    def __init__(self, src, minimum_images_per_class=1, maximum_images_per_class=None, transforms=None, images_perclass=None):
         self.src = src
         if not images_perclass:
             images_perclass = self.fetch_images_perclass(src)
 
+        # CLASS MINIMUM CUTTOFF
         self.minimum_images_per_class = max(1, minimum_images_per_class)  # always at least 1.
-        new_images_perclass = {label: images for label, images in images_perclass.items() if
+        images_perclass__minthresh = {label: images for label, images in images_perclass.items() if
                                len(images) >= self.minimum_images_per_class}
-        classes_ignored = sorted(set(images_perclass.keys())-set(new_images_perclass.keys()))
+        classes_ignored = sorted(set(images_perclass.keys())-set(images_perclass__minthresh.keys()))
         self.classes_ignored_from_too_few_samples = [(c, len(images_perclass[c])) for c in classes_ignored]
-        self.classes = sorted(new_images_perclass.keys())
+        self.classes = sorted(images_perclass__minthresh.keys())
+
+        # CLASS MAXIMUM LIMITING
+        self.maximum_images_per_class = maximum_images_per_class
+        if maximum_images_per_class:
+            assert maximum_images_per_class > self.minimum_images_per_class
+            images_perclass__maxlimited = {label: images[:maximum_images_per_class] for label, images in images_perclass__minthresh.items()}
+            images_perclass__final = images_perclass__maxlimited
+            self.classes_limited_from_too_many_samples = [c for c in self.classes if len(images_perclass__maxlimited[c]) < len(images_perclass__minthresh[c])]
+        else:
+            images_perclass__final = images_perclass__minthresh
+            self.classes_limited_from_too_many_samples = None
+
+        # sort perclass images internally, just because its nice.
+        images_perclass__final = {label:sorted(images) for label, images in images_perclass__final.items()}
 
         # flatten images_perclass to congruous list of image paths and target id's
-        self.targets, self.images = zip(*((self.classes.index(t), i) for t in new_images_perclass for i in new_images_perclass[t]))
+        self.targets, self.images = zip(*((self.classes.index(t), i) for t in images_perclass__final for i in images_perclass__final[t]))
         self.transforms = transforms
 
-    @staticmethod
-    def fetch_images_perclass(src):
+    @classmethod
+    def fetch_images_perclass(cls, src, include_exclude_rename=None):
         """ folders in src are the classes """
-        classes = [d.name for d in os.scandir(src) if d.is_dir()]
-        classes.sort()
+        # TODO implement SRC as a config file that can combine classes from multiple datasets.
+        #      datasets may have different priority levels (relevant for class-max option that happens outside of this function)
 
-        images_perclass = {}
-        for subdir in classes:
-            files = os.listdir(os.path.join(src, subdir))
-            #files = sorted([i for i in files if i.lower().endswith(ext)])
-            files = sorted([f for f in files if os.path.splitext(f)[1] in datasets.folder.IMG_EXTENSIONS])
-            images_perclass[subdir] = [os.path.join(src, subdir, i) for i in files]
-        return images_perclass
+        # classic behavior
+        if os.path.isdir(src) and include_exclude_rename is None:
+            classes = [d.name for d in os.scandir(src) if d.is_dir()]
+            classes.sort()
+
+            images_perclass = {}
+            for subdir in classes:
+                files = os.listdir(os.path.join(src, subdir))
+                #files = sorted([i for i in files if i.lower().endswith(ext)])
+                files = sorted([f for f in files if os.path.splitext(f)[1] in datasets.folder.IMG_EXTENSIONS])
+                images_perclass[subdir] = [os.path.join(src, subdir, i) for i in files]
+            return images_perclass
+
+        # classes are being adjusted on a per-dataset level
+        elif os.path.isdir(src) and include_exclude_rename is not None:
+            images_perclass = cls.fetch_images_perclass(src)
+            #TODO perform include_exclude_rename
+            # eg: [('Akashiwo', 1), ('Bacillaria', 0), ('Bidulphia', 'BIDOUF'), ('Cochlodinium', 'BIDOUF'), ('Didinium_sp', '1')]
+            for key,mode in include_exclude_rename:
+                if mode==1 or mode=='1': pass
+                elif (mode==0 or mode=='0') and key in images_perclass:
+                    del images_perclass[key]
+                else: # RENAME
+                    if key not in images_perclass: continue
+                    new_key = mode
+                    if new_key in images_perclass:
+                        images_perclass[new_key].extend(images_perclass[key])
+                    else: images_perclass[new_key] = images_perclass[key]
+                    del images_perclass[key]
+            return images_perclass
+
+        else: #elif os.path.isfile(src): # src is a dataset config/combine file.
+            df = pd.read_csv(src, header=0, index_col=0)
+            cols = df.columns.to_list()
+            datasets_by_priority = []
+            lowest_priority = float('inf')
+            for i in range(len(cols)):
+                col  = cols[i].split(':',1)
+                if len(col)==2:
+                    priority=int(col[0])
+                    dataset = col[1]
+                else:
+                    dataset=col[0]
+                    priority=0
+                if lowest_priority > priority:
+                    lowest_priority = priority
+
+                include_exclude_rename__PARAM = zip(df.index,df[cols[i]].to_list())
+                dataset_images_perclass = cls.fetch_images_perclass(dataset, include_exclude_rename=include_exclude_rename__PARAM)
+
+                datasets_by_priority.append((priority,dataset,dataset_images_perclass))
+
+            # assigning non-prioritized datasets to the max+1 priority (last)
+            priorities = [p for p,d,i in datasets_by_priority]
+            priorities = set([max(priorities)+1 if p==0 else p for p in priorities])
+            datasets_by_priority = (( (max(priorities) if p==0 else p) ,d,i) for p,d,i in datasets_by_priority)
+
+            images_perclass = dict()
+            def extend_dol(d1,d2):
+                """d1 and d2 are dicts who's items must all be lists. d1 is modified by d2 such that d2's lists extend d1's corresponding lists."""
+                for key in d2:
+                    if key in d1:
+                        d1[key].extend(d2[key])
+                    else:
+                        d1[key] = d2[key]
+
+            for priority_level in sorted(priorities):
+                priority_images_perclass = dict()
+                for p,ds,ipc in datasets_by_priority:
+                    if p == priority_level:  # same priority
+                        extend_dol(priority_images_perclass,ipc) # TODO update clobbers previous lists. this is no bueno. we want to EXTEND any existing values
+                for key in priority_images_perclass:
+                    random.shuffle(priority_images_perclass[key])
+                extend_dol(images_perclass,priority_images_perclass)  # TODO update clobbers previous lists. this is no bueno. we want to EXTEND any existing values
+
+            # TODO read src/config file.
+            #      (1) DONE! run cls.fetch_images(dataset, configuration) for each dataset
+            #      (2) DONE! on a dataset priority basis, randomize image orders (make sure random seed is known?)
+            #      (3) DONE! Then concat all perclass dataset images (still in priority order basis)
+            # TODO: test this mess :)
+            return images_perclass
+
 
     @property
     def images_perclass(self):
@@ -104,7 +194,7 @@ class NeustonDataset(Dataset):
         return dataset1, dataset2
 
     @classmethod
-    def from_csv(cls, src, csv_file, column_to_run, transforms=None, minimum_images_per_class=None):
+    def from_csv(cls, src, csv_file, column_to_run, transforms=None, minimum_images_per_class=None, maximum_images_per_class=None):
         #1) load csv
         df = pd.read_csv(csv_file, header=0)
         base_list = df.iloc[:,0].tolist()      # first column
@@ -170,7 +260,9 @@ class NeustonDataset(Dataset):
             print('\n    '.join([msg]+skipped_classes))
 
         #5) create dataset
-        return cls(src=src, images_perclass=new_images_perclass, transforms=transforms, minimum_images_per_class=minimum_images_per_class)
+        return cls(src=src, images_perclass=new_images_perclass, transforms=transforms,
+                   minimum_images_per_class=minimum_images_per_class,
+                   maximum_images_per_class=maximum_images_per_class)
 
     def __getitem__(self, index):
         path = self.images[index]
@@ -211,18 +303,18 @@ def get_trainval_datasets(args):
     ## initializing data ##
     print('Initializing Data...')
     if not args.class_config:
-        nd = NeustonDataset(src=args.SRC, minimum_images_per_class=args.class_min)
+        nd = NeustonDataset(src=args.SRC, minimum_images_per_class=args.class_min, maximum_images_per_class=args.class_max)
     else:
-        nd = NeustonDataset.from_csv(csv_file=args.class_config[0], column_to_run=args.class_config[1],
-                                     src=args.SRC, minimum_images_per_class=args.class_min)
-        # TODO record which classes were grouped and skipped.
+        nd = NeustonDataset.from_csv(src=args.SRC, csv_file=args.class_config[0], column_to_run=args.class_config[1],
+                                     minimum_images_per_class=args.class_min, maximum_images_per_class=args.class_max)
+    # TODO record to args which classes were grouped, skipped, and limited.
     ratio1, ratio2 = map(int, args.split.split(':'))
 
     dataset_tup = nd.split(ratio1, ratio2, seed=args.seed)
-    if False: # srgs.swap: #TODO: DUPES
-        validation_dataset, training_dataset = dataset_tup
-    else:
+    if not args.swap:
         training_dataset, validation_dataset = dataset_tup
+    else:
+        validation_dataset, training_dataset = dataset_tup
 
     ci_nd = nd.classes_ignored_from_too_few_samples
     ci_train = training_dataset.classes_ignored_from_too_few_samples
