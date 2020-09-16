@@ -73,7 +73,7 @@ usage: neuston_net.py TRAIN [-h] [--untrain] [--img-norm MEAN STD] [--seed SEED]
 positional arguments:
   TRAINING_ID           Training ID. This value is the default value used by --outdir and --model-id.
   MODEL                 Select a base model. Eg: "inception_v3"
-  SRC                   Directory with class-label subfolders and images
+  SRC                   Directory with class-label subfolders and images. May also be a dataset-configuration csv.
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -89,6 +89,9 @@ Dataset Adjustments:
   --class-config CSV COL
                         Skip and combine classes as defined by column COL of a special CSV configuration file
   --class-min MIN       Exclude classes with fewer than MIN instances. Default is 2
+  --class-max MAX       Limit classes to a MAX number of instances. 
+                        If multiple datasets are specified with a dataset-configuration csv, 
+                        classes from lower-priority datasets are truncated first. 
 
 Epoch Parameters:
   --emax MAX            Maximum number of training epochs. Default is 60
@@ -108,7 +111,7 @@ Output Options:
   --outdir OUTDIR       Default is "training-output/{TRAINING_ID}"
   --model-id ID         Default is "{date}__{TRAINING_ID}"
   --epochs-log ELOG     Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv
-  --args-log ALOG       Specify a yaml filename. Includes all user-specified and default training parameters. Default is hparams.yml
+  --args-log ALOG       Specify a human-readable yaml filename. Includes all user-specified and default training parameters. Default is args.yml
   --results FNAME [SERIES ...]
                         FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". 
                                Accepts .json .h5 and .mat file formats.

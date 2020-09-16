@@ -52,6 +52,8 @@ def do_training(args):
     os.makedirs(args.outdir,exist_ok=True)
 
     # Setup Callbacks
+    callbacks=[]
+
     validation_results_callbacks = []
     plotting_callbacks = [] # TODO
     if not args.result_files:
@@ -59,6 +61,8 @@ def do_training(args):
     for result_file in args.result_files:
         svr = SaveValidationResults(outdir=args.outdir, outfile=result_file[0], series=result_file[1:])
         validation_results_callbacks.append(svr)
+    callbacks.extend(validation_results_callbacks)
+    callbacks.extend(plotting_callbacks)
 
     # Set Seed. If args.seed is 0 ie None, a random seed value is used and stored
     args.seed = seed_everything(args.seed or None)
@@ -88,7 +92,7 @@ def do_training(args):
                       max_epochs=args.emax, min_epochs=args.emin,
                       early_stop_callback=EarlyStopping(patience=args.estop) if args.estop else False,
                       checkpoint_callback=ModelCheckpoint(filepath=chkpt_path),
-                      callbacks=validation_results_callbacks,
+                      callbacks=callbacks,
                       )
 
     # Setup Model
@@ -254,7 +258,7 @@ if __name__ == '__main__':
     ## Training Vars ##
     train.add_argument('TRAINING_ID', help='Training ID. This value is the default value used by --outdir and --model-id.')
     train.add_argument('MODEL', help='Select a base model. Eg: "inception_v3"') # TODO choices field. TODO: "Accepts a known model name, or a path to a specific model file for transfer learning"
-    train.add_argument('SRC', help='Directory with class-label subfolders and images')
+    train.add_argument('SRC', help='Directory with class-label subfolders and images. May also be a dataset-configuration csv.')
 
     model = train.add_argument_group(title='Model Adjustments', description=None)
     model.add_argument('--untrain', dest='pretrained', default=True, action='store_false', help='If set, initializes MODEL ~without~ pretrained neurons. Default (unset) is pretrained')
@@ -266,7 +270,9 @@ if __name__ == '__main__':
     data.add_argument('--split', metavar='T:V', default='80:20', help='Ratio of images per-class to split randomly into Training and Validation datasets. Randomness affected by SEED. Default is "80:20"')
     data.add_argument('--class-config', metavar=('CSV','COL'), nargs=2, help='Skip and combine classes as defined by column COL of a special CSV configuration file')
     data.add_argument('--class-min', metavar='MIN', default=2, type=int, help='Exclude classes with fewer than MIN instances. Default is 2')
-    #data.add_argument('--swap', action='store_true', help=argparse.SUPPRESS)  # dupes placeholder. may not be needed.
+    data.add_argument('--class-max', metavar='MAX', default=None, type=int, help='Limit classes to a MAX number of instances. '
+        'If multiple datasets are specified with a dataset-configuration csv, classes from lower-priority datasets are truncated first.')
+    data.add_argument('--swap', default=False, action='store_true', help=argparse.SUPPRESS)  # dupes placeholder. may not be needed.
     
     epochs = train.add_argument_group(title='Epoch Parameters', description=None)
     epochs.add_argument('--emax', metavar='MAX',default=60, type=int, help='Maximum number of training epochs. Default is 60')

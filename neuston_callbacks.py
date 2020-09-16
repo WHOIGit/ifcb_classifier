@@ -56,7 +56,7 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
         stats = dict()
         for mode in ['weighted','macro', None]:
             for stat in ['f1','recall','precision']:
-                metric = getattr(metrics,stat+'_score')(input_classes,output_classes,labels=class_idxs,average=mode)
+                metric = getattr(metrics,stat+'_score')(input_classes,output_classes,labels=class_idxs,average=mode, zero_division=0)
                 label = '{}_{}'.format(stat,mode if mode else 'perclass')
                 stats[label] = metric  # f1|recall|precision _ macro|weighted|perclass
 
