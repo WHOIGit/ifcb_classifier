@@ -190,6 +190,7 @@ def do_run(args):
             bin_id = os.path.basename(args.src)
             dd = ifcb.DataDirectory(parent,whitelist=[bin_id])
 
+        error_bins = []
         for i, bin_id in enumerate(dd):
 
             if args.filter: # applying filter
@@ -211,7 +212,16 @@ def do_run(args):
             if len(image_loader) == 0: continue
 
             # Do Runs
-            trainer.test(classifier, test_dataloaders=image_loader)
+            try: trainer.test(classifier, test_dataloaders=image_loader)
+            except Exception as e:
+                error_bins.append(bin_id)
+                print(type(e), bin_id, e)
+
+        # Final Statements
+        print('RUN IS DONE')
+        if error_bins:
+            print("The following bins failed; they were not processed:")
+            print('\n'.join(error_bins), end='')
 
     else: # images
         img_paths = []
