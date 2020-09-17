@@ -198,6 +198,11 @@ def do_run(args):
                 elif filter_mode=='OUT': # if bin matches any of the keywords, skip it
                     if any([k in str(bin_id) for k in filter_keywords]): continue
 
+            if not args.clobber: #TODO test
+                if all([ os.path.isfile(os.path.join(args.outdir, ofile).format(bin=bin_id)) for ofile in args.outfile ]):
+                    print('{} result-file(s) already exist - skipping this bin'.format(bin_id))
+                    continue
+
             bin_dataset = IfcbBinDataset(bin_id, classifier.hparams.resize)
             image_loader = DataLoader(bin_dataset, batch_size=args.batch_size,
                                       pin_memory=True, num_workers=args.loaders)
@@ -263,7 +268,7 @@ if __name__ == '__main__':
 
     model = train.add_argument_group(title='Model Adjustments', description=None)
     model.add_argument('--untrain', dest='pretrained', default=True, action='store_false', help='If set, initializes MODEL ~without~ pretrained neurons. Default (unset) is pretrained')
-    model.add_argument('--img-norm', nargs=2, metavar=('MEAN','STD'), help='Normalize images by MEAN and STD. This is like whitebalancing.')
+    model.add_argument('--img-norm', nargs=2, metavar=('MEAN','STD'), type=float, help='Normalize images by MEAN and STD. This is like whitebalancing.')
     # TODO layer freezing and transfer learning params.
 
     data = train.add_argument_group(title='Dataset Adjustments', description=None)
@@ -307,7 +312,7 @@ if __name__ == '__main__':
     #optim.add_argument('--learning-rate',default=0.001,type=float,help='Set a learning rate. Default is 0.001')
     #optim.add_argument('--weight-decay', default='?', help="not sure where this comes in")
     #optim.add_argument('--class-norm', help='Bias results to emphasize smaller classes')
-    #optim.add_argument('--batch-norm', help='i forget what this is exactly rn')
+    #optim.add_argument('--batch-norm', help='i forget what this is exactly')
 
     ## Run Vars ##
     run.add_argument('RUN_ID', help='Run ID. Used by --outdir')
@@ -315,7 +320,7 @@ if __name__ == '__main__':
     run.add_argument('SRC', help='Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. Directories are accessed recursively')
 
     run.add_argument('--type', dest='src_type', default='bin', choices=['bin','img'], help='File type to perform classification on. Defaults is "bin"')
-    run.add_argument('--outdir', default='run-output/{RUN_ID}',help='Default is "run-output/{RUN_ID}"')
+    run.add_argument('--outdir', default='run-output/{RUN_ID}', help='Default is "run-output/{RUN_ID}"')
     run.add_argument('--outfile', default=[], action='append',
         help='''Name/pattern of the output classification file.
                 If TYPE==bin, files are created on a per-bin basis. OUTFILE must include "{bin}", which will be replaced with the a bin's id.
@@ -324,6 +329,7 @@ if __name__ == '__main__':
              ''') # TODO? If TYPE==img, "{dir}" in OUTFILE will be replaced with the parent directory of classified images."
     run.add_argument('--filter', nargs='+', metavar=('IN|OUT','KEYWORD'),
         help='Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. KEYWORD may also be a text file containing KEYWORDs, line-deliminated.')
+    run.add_argument('--clobber', action='store_true', help='If set, already processed bins in OUTDIR are reprocessed. By default, if an OUTFILE exists already the associated bin is not reprocessed.')
     #run.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
     args = parser.parse_args()
@@ -339,8 +345,8 @@ if __name__ == '__main__':
         args.version = None
     main(args)
 
-# TODO (minor) move dataloaders to NeustonModel for auto-batch-size enabling
-# TODO (minor) utility script to fine img-norm MEAN STD
+# TODO move dataloaders to NeustonModel for auto-batch-size enabling
+# TODO utility script to fine img-norm MEAN STD
 # TODO run on larger, current dataset using class-config
 # TODO implement plots (matplotlib vs plotly?)
 # TODO implement hpc/slurm utility script (test-tube)

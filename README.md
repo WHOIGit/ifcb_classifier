@@ -167,6 +167,8 @@ optional arguments:
   --filter IN|OUT [KEYWORD ...]
                         Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. 
                         KEYWORD may also be a text file containing KEYWORDs, line-deliminated.
+  --clobber             If set, already processed bins in OUTDIR are reprocessed. 
+                        By default, if an OUTFILE exists already the associated bin is not reprocessed.
 
 ```
 

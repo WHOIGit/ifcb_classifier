@@ -160,7 +160,6 @@ class SaveRunResults(ptl.callbacks.base.Callback):
     def on_test_end(self, trainer, pl_module):
         class_labels = pl_module.hparams.classes
 
-        # TODO make sure this works as expected??
         rr = trainer.callback_metrics['RunResults']
         # RunResult: inputs, outputs, bin_id
 
