@@ -335,6 +335,7 @@ def get_trainval_transforms(args):
     args.resize = 299 if args.MODEL == 'inception_v3' else 224
     tform_resize = transforms.Resize([args.resize,args.resize])
     tform_img_norm = transforms.Normalize(3*[args.img_norm[0]],3*[args.img_norm[1]]) if args.img_norm else None
+    # images from bins are already PIL_images, so no need to include ToPILImage()
     base_tforms = [tform_resize, transforms.ToTensor()]
     if tform_img_norm: base_tforms.append(tform_img_norm)
 
