@@ -278,7 +278,8 @@ if __name__ == '__main__':
 
     model = train.add_argument_group(title='Model Adjustments', description=None)
     model.add_argument('--untrain', dest='pretrained', default=True, action='store_false', help='If set, initializes MODEL ~without~ pretrained neurons. Default (unset) is pretrained')
-    model.add_argument('--img-norm', nargs=2, metavar=('MEAN','STD'), type=float, help='Normalize images by MEAN and STD. This is like whitebalancing.')
+    model.add_argument('--img-norm', nargs=2, metavar=('MEAN','STD'), help='Normalize images by MEAN and STD. This is like whitebalancing. '
+                                                                           'eg1: "0.667 0.161", eg2: "0.056,0.058,0.051 0.067,0.071,0.057"')
     # TODO layer freezing and transfer learning params.
 
     data = train.add_argument_group(title='Dataset Adjustments', description=None)

@@ -334,10 +334,18 @@ def get_trainval_transforms(args):
     # Transforms  #
     args.resize = 299 if args.MODEL == 'inception_v3' else 224
     tform_resize = transforms.Resize([args.resize,args.resize])
-    tform_img_norm = transforms.Normalize(3*[args.img_norm[0]],3*[args.img_norm[1]]) if args.img_norm else None
-    # images from bins are already PIL_images, so no need to include ToPILImage()
     base_tforms = [tform_resize, transforms.ToTensor()]
-    if tform_img_norm: base_tforms.append(tform_img_norm)
+    if args.img_norm:
+        mean = args.img_norm[0]
+        mean = [float(m) for m in mean.split(',')]
+        if len(mean)==1: mean = 3*mean
+        std = args.img_norm[1]
+        std = [float(s) for s in std.split(',')]
+        if len(std)==1: std = 3*std
+        assert len(mean)==len(std)==3, '--img-norm invalid: {}'.format(args.img_norm)
+        tform_img_norm = transforms.Normalize(mean,std)
+        base_tforms.append(tform_img_norm)
+    # images from bins are already PIL_images, so no need to include ToPILImage()
 
     aug_tforms_training = []
     aug_tforms_validation = []

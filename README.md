@@ -81,6 +81,7 @@ optional arguments:
 Model Adjustments:
   --untrain             If set, initializes MODEL ~without~ pretrained neurons. Default (unset) is pretrained
   --img-norm MEAN STD   Normalize images by MEAN and STD. This is like whitebalancing.
+                        eg1: "0.667 0.161", eg2: "0.056,0.058,0.051 0.067,0.071,0.057"
 
 Dataset Adjustments:
   --seed SEED           Set a specific seed for deterministic output & dataset-splitting reproducability.
