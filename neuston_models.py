@@ -136,7 +136,7 @@ class NeustonModel(ptl.LightningModule):
                     input_srcs=input_srcs, outputs=outputs)
 
     # RUNNING the model #
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch, batch_idx, dataloader_idx=None):
         input_data, input_srcs = batch
         outputs = self.forward(input_data)
         outputs = outputs.logits if isinstance(outputs,InceptionOutputs) else outputs
@@ -144,15 +144,25 @@ class NeustonModel(ptl.LightningModule):
         return dict(test_outputs=outputs.cpu(), test_srcs=input_srcs)
 
     def test_epoch_end(self, steps):
-        outputs = torch.cat([batch['test_outputs'] for batch in steps],dim=0).numpy()
-        images = [batch['test_srcs'] for batch in steps]
-        images = [item for sublist in images for item in sublist]  # flatten list
-        dataset = self.test_dataloader().dataset
-        if isinstance(dataset, IfcbBinDataset):
-            bin_id = str(dataset.bin.pid)
-        else: bin_id = 'NaB'
-        rr = self.RunResults(inputs=images, outputs=outputs, bin_id=bin_id)
-        return dict(RunResults=rr)
+
+        # handle single and multiple test dataloaders
+        datasets = self.test_dataloader()
+        if isinstance(datasets, list): datasets = [ds.dataset for ds in datasets]
+        else: datasets = [datasets.dataset]
+        if isinstance(steps[0],dict):
+            steps = [steps]
+
+        RRs = []
+        for steps,dataset in zip(steps,datasets):
+            outputs = torch.cat([batch['test_outputs'] for batch in steps],dim=0).numpy()
+            images = [batch['test_srcs'] for batch in steps]
+            images = [item for sublist in images for item in sublist]  # flatten list
+            if isinstance(dataset, IfcbBinDataset):
+                bin_id = str(dataset.bin.pid)
+            else: bin_id = 'NaB'
+            rr = self.RunResults(inputs=images, outputs=outputs, bin_id=bin_id)
+            RRs.append(rr)
+        return dict(RunResults=RRs)
 
     class RunResults:
         def __init__(self, inputs, outputs, bin_id):

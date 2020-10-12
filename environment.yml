@@ -5,7 +5,7 @@ channels:
 dependencies:
 - python>=3.8
 - cudatoolkit=10.1
-- pytorch-lightning=0.8
+- pytorch-lightning=0.10
 - torchvision=0.5
 - scikit-learn
 - pandas

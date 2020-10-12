@@ -17,7 +17,7 @@ from torchvision.datasets.folder import IMG_EXTENSIONS
 # project imports
 import ifcb
 from neuston_models import NeustonModel
-from neuston_callbacks import SaveValidationResults, SaveRunResults
+from neuston_callbacks import SaveValidationResults, SaveTestResults
 from csv_logger import CSVLogger  # ptl_v0.8 does not have this but ptl_v0.9 does
 from neuston_data import get_trainval_datasets, IfcbBinDataset, ImageDataset
 
@@ -149,7 +149,7 @@ def do_run(args):
     plotting_callbacks = []  # TODO
     run_results_callbacks = []
     for outfile in args.outfile:
-        svr = SaveRunResults(outdir=args.outdir, outfile=outfile, timestamp=args.cmd_timestamp)
+        svr = SaveTestResults(outdir=args.outdir, outfile=outfile, timestamp=args.cmd_timestamp)
         run_results_callbacks.append(svr)
 
     # create trainer
@@ -171,6 +171,7 @@ def do_run(args):
                 filter_keywords.append(keyword)
 
     # create dataset
+    image_loaders = []
     if args.src_type == 'bin':
         # Formatting Dataset
         if os.path.isdir(args.SRC):
@@ -191,8 +192,10 @@ def do_run(args):
             dd = ifcb.DataDirectory(parent,whitelist=[bin_id])
 
         error_bins = []
-        for i, bin_id in enumerate(dd):
 
+        if args.gobig: print('Loading Bins',end=' ')
+        for i, bin_fileset in enumerate(dd):
+            bin_id = bin_fileset.pid
             if args.filter: # applying filter
                 if filter_mode=='IN': # if bin does NOT match any of the keywords, skip it
                     if not any([k in str(bin_id) for k in filter_keywords]): continue
@@ -200,28 +203,37 @@ def do_run(args):
                     if any([k in str(bin_id) for k in filter_keywords]): continue
 
             if not args.clobber: #TODO test
-                if all([ os.path.isfile(os.path.join(args.outdir, ofile).format(bin=bin_id)) for ofile in args.outfile ]):
+                output_files = [os.path.join(args.outdir, ofile).format(bin=bin_id) for ofile in args.outfile ]
+                if all([ os.path.isfile(ofile) for ofile in output_files ]):
                     print('{} result-file(s) already exist - skipping this bin'.format(bin_id))
                     continue
 
-            bin_dataset = IfcbBinDataset(bin_id, classifier.hparams.resize)
+            bin_dataset = IfcbBinDataset(bin_fileset, classifier.hparams.resize)
             image_loader = DataLoader(bin_dataset, batch_size=args.batch_size,
                                       pin_memory=True, num_workers=args.loaders)
 
             # skip empty bins
-            if len(image_loader) == 0: continue
+            if len(image_loader) == 0:
+                error_bins.append((bin_id, AssertionError('Bin is Empty')))
+                continue
+            if args.gobig:
+                print('.',end='',flush=True)
+                image_loaders.append(image_loader)
+            else:
+                # Do runs one bin at a time
+                try: trainer.test(classifier, test_dataloaders=image_loader)
+                except Exception as e:
+                    error_bins.append((bin_id,e))
 
-            # Do Runs
-            try: trainer.test(classifier, test_dataloaders=image_loader)
-            except Exception as e:
-                error_bins.append(bin_id)
-                print(type(e), bin_id, e)
+        # Do Runs all at once
+        if args.gobig: print(); trainer.test(classifier, test_dataloaders=image_loaders)
 
         # Final Statements
         print('RUN IS DONE')
         if error_bins:
             print("The following bins failed; they were not processed:")
-            print('\n'.join(error_bins), end='')
+            for bin_id,err in error_bins:
+                print(bin_id,type(err),err)
 
     else: # images
         img_paths = []
@@ -341,6 +353,7 @@ if __name__ == '__main__':
     run.add_argument('--filter', nargs='+', metavar=('IN|OUT','KEYWORD'),
         help='Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. KEYWORD may also be a text file containing KEYWORDs, line-deliminated.')
     run.add_argument('--clobber', action='store_true', help='If set, already processed bins in OUTDIR are reprocessed. By default, if an OUTFILE exists already the associated bin is not reprocessed.')
+    run.add_argument('--gobig', action='store_true', help=argparse.SUPPRESS)
     #run.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
     args = parser.parse_args()
