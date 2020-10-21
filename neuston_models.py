@@ -13,6 +13,7 @@ from torchvision.models.inception import InceptionOutputs
 import pytorch_lightning as ptl
 from sklearn import metrics
 import numpy as np
+import ifcb
 
 # project imports #
 from neuston_data import IfcbBinDataset
@@ -88,7 +89,7 @@ class NeustonModel(ptl.LightningModule):
         train_loss = torch.stack([batch['loss'] for batch in steps]).sum().item()
         #print('training_epoch_end: self.agg_train_loss={:.5f}, train_loss={:.5f}, DIFF={:.9f}'.format(self.agg_train_loss, train_loss, self.agg_train_loss-train_loss), end='\n\n')
         self.agg_train_loss = 0.0
-        return dict(train_loss=train_loss)
+        #return dict(train_loss=train_loss)
 
     # Validation #
     def validation_step(self, batch, batch_idx):
@@ -131,9 +132,21 @@ class NeustonModel(ptl.LightningModule):
         eoe = eoe.format(True if self.current_epoch==self.best_epoch else self.best_epoch+1, self.agg_train_loss, validation_loss, 100*f1_weighted, 100*f1_macro)
         print(eoe, flush=True, end='\n\n')  # so slurm output can be followed along
 
-        return dict(val_loss=validation_loss, log=log,
-                    input_classes=input_classes, output_classes=output_classes,
-                    input_srcs=input_srcs, outputs=outputs)
+        # used by callbacks and logger
+        self.log('epoch', self.current_epoch, on_epoch=True)
+        self.log('best', self.best_epoch==self.current_epoch, on_epoch=True)
+        self.log('train_loss', self.agg_train_loss, on_epoch=True)
+        self.log('val_loss', validation_loss, on_epoch=True)
+
+        # csv_logger logger hacked to not include these in epochs.csv output
+        self.log('input_classes', input_classes, on_epoch=True)
+        self.log('output_classes', output_classes, on_epoch=True)
+        self.log('input_srcs', input_srcs, on_epoch=True)
+        self.log('outputs', outputs, on_epoch=True)
+
+        # these will apppear in epochs.csv, but are not used by callbacks
+        self.log('f1_macro',f1_macro, on_epoch=True)
+        self.log('f1_weighted',f1_weighted, on_epoch=True)
 
     # RUNNING the model #
     def test_step(self, batch, batch_idx, dataloader_idx=None):
@@ -158,17 +171,20 @@ class NeustonModel(ptl.LightningModule):
             images = [batch['test_srcs'] for batch in steps]
             images = [item for sublist in images for item in sublist]  # flatten list
             if isinstance(dataset, IfcbBinDataset):
-                bin_id = str(dataset.bin.pid)
-            else: bin_id = 'NaB'
-            rr = self.RunResults(inputs=images, outputs=outputs, bin_id=bin_id)
+                input_obj = dataset.bin.pid
+            else:
+                input_obj = dataset.input_src  # a path string
+            rr = self.RunResults(inputs=images, outputs=outputs, input_obj=input_obj)
             RRs.append(rr)
-        return dict(RunResults=RRs)
+        self.log('RunResults',RRs)
+        #return dict(RunResults=RRs)
 
     class RunResults:
-        def __init__(self, inputs, outputs, bin_id):
+        def __init__(self, inputs, outputs, input_obj):
             self.inputs = inputs
             self.outputs = outputs
-            self.bin_id = bin_id
+            self.input_obj = input_obj
+            self.type = 'Bin' if isinstance(input_obj,ifcb.Pid) else 'ImgDir'
         def __repr__(self):
-            rep = 'Bin: {} ({} imgs)'.format(self.bin_id, len(self.inputs))
+            rep = '{}: {} ({} imgs)'.format(self.type, self.input_obj, len(self.inputs))
             return repr(rep)

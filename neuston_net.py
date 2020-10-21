@@ -27,14 +27,6 @@ from neuston_data import get_trainval_datasets, IfcbBinDataset, ImageDataset
 
 def main(args):
 
-    ## GPU torch setup ## - use all available GPU's
-    # pytorch uses the ~index~ of CUDA_VISIBLE_DEVICES.
-    # So if gpus == [3,4] then device "cuda:0" == GPU no. 3
-    #                      and device "cuda:1" == GPU no. 4
-    if torch.cuda.is_available():
-        args.gpus = [int(gpu) for gpu in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
-    else: args.gpus = None
-
     if args.cmd_mode=='TRAIN':
         do_training(args)
     else: # RUN
@@ -90,10 +82,10 @@ def do_training(args):
     trainer = Trainer(deterministic=True, logger=logger,
                       gpus=len(args.gpus) if args.gpus else None,
                       max_epochs=args.emax, min_epochs=args.emin,
-                      early_stop_callback=EarlyStopping(patience=args.estop) if args.estop else False,
+                      early_stop_callback=EarlyStopping('val_loss',patience=args.estop) if args.estop else False,
                       checkpoint_callback=ModelCheckpoint(filepath=chkpt_path),
                       callbacks=callbacks,
-                      #num_sanity_val_steps=0
+                      num_sanity_val_steps=0
                       )
 
     # Setup Model
@@ -121,16 +113,6 @@ def do_training(args):
 
 def do_run(args):
 
-    # ARG CORRECTIONS AND CHECKS
-    date_str = args.cmd_timestamp.split('T')[0]
-    args.outdir = args.outdir.format(date=date_str, RUN_ID=args.RUN_ID)
-    os.makedirs(args.outdir,exist_ok=True)
-
-    # set OUTFILE defaults
-    if args.outfile == []:
-        if args.src_type == 'bin': args.outfile=['{bin}_class_v2.h5']
-        if args.src_type == 'img': args.outfile = ['img_results.json']
-
     # assert correct filter arguments
     if args.filter:
         if not args.filter[0] in ['IN', 'OUT']:
@@ -144,6 +126,17 @@ def do_run(args):
     #classifier.hparams.run_outdir = args.outdir
     #classifier.hparams.run_timestamp = args.cmd_timestamp
     seed_everything(classifier.hparams.seed)
+
+    # ARG CORRECTIONS AND CHECKS
+    if os.path.isdir(args.SRC) and not args.SRC.endswith(os.sep): args.SRC = args.SRC+os.sep
+    model_id = classifier.hparams.model_id
+    run_date_str,run_time_str = args.cmd_timestamp.split('T')
+    args.outdir = args.outdir.format(RUN_DATE=run_date_str, RUN_ID=args.RUN_ID, MODEL_ID=model_id)
+
+    # set OUTFILE defaults
+    if args.outfile == []:
+        if args.src_type == 'bin': args.outfile=['D{BIN_YEAR}/D{BIN_DATE}/{BIN_ID}_class.h5']
+        if args.src_type == 'img': args.outfile = ['img_results.json']
 
     # Setup Callbacks
     plotting_callbacks = []  # TODO
@@ -188,24 +181,30 @@ def do_run(args):
             dd = ifcb.DataDirectory(parent,whitelist=bins)
         else: # single bin # TODO TEST: single bin run
             parent = os.path.dirname(args.SRC)
-            bin_id = os.path.basename(args.src)
+            bin_id = os.path.basename(args.SRC)
             dd = ifcb.DataDirectory(parent,whitelist=[bin_id])
 
         error_bins = []
 
         if args.gobig: print('Loading Bins',end=' ')
         for i, bin_fileset in enumerate(dd):
-            bin_id = bin_fileset.pid
+            bin_fileset.pid.namespace = os.path.dirname(bin_fileset.fileset.basepath.replace(args.SRC,''))+os.sep
+            bin_obj = bin_fileset.pid
             if args.filter: # applying filter
                 if filter_mode=='IN': # if bin does NOT match any of the keywords, skip it
-                    if not any([k in str(bin_id) for k in filter_keywords]): continue
+                    if not any([k in str(bin_obj) for k in filter_keywords]): continue
                 elif filter_mode=='OUT': # if bin matches any of the keywords, skip it
-                    if any([k in str(bin_id) for k in filter_keywords]): continue
+                    if any([k in str(bin_obj) for k in filter_keywords]): continue
 
-            if not args.clobber: #TODO test
-                output_files = [os.path.join(args.outdir, ofile).format(bin=bin_id) for ofile in args.outfile ]
+            if not args.clobber:
+                output_files = [os.path.join(args.outdir, ofile) for ofile in args.outfile]
+                outfile_dict = dict(BIN_ID=bin_obj.pid,
+                                    BIN_YEAR=bin_obj.year,
+                                    BIN_DATE=bin_obj.yearday,
+                                    INPUT_SUBDIRS=bin_obj.namespace)
+                output_files = [ofile.format(**outfile_dict).replace(2*os.sep,os.sep) for ofile in output_files]
                 if all([ os.path.isfile(ofile) for ofile in output_files ]):
-                    print('{} result-file(s) already exist - skipping this bin'.format(bin_id))
+                    print('{} result-file(s) already exist - skipping this bin'.format(bin_obj))
                     continue
 
             bin_dataset = IfcbBinDataset(bin_fileset, classifier.hparams.resize)
@@ -214,7 +213,7 @@ def do_run(args):
 
             # skip empty bins
             if len(image_loader) == 0:
-                error_bins.append((bin_id, AssertionError('Bin is Empty')))
+                error_bins.append((bin_obj, AssertionError('Bin is Empty')))
                 continue
             if args.gobig:
                 print('.',end='',flush=True)
@@ -223,7 +222,7 @@ def do_run(args):
                 # Do runs one bin at a time
                 try: trainer.test(classifier, test_dataloaders=image_loader)
                 except Exception as e:
-                    error_bins.append((bin_id,e))
+                    error_bins.append((bin_obj,e))
 
         # Do Runs all at once
         if args.gobig: print(); trainer.test(classifier, test_dataloaders=image_loaders)
@@ -232,19 +231,21 @@ def do_run(args):
         print('RUN IS DONE')
         if error_bins:
             print("The following bins failed; they were not processed:")
-            for bin_id,err in error_bins:
-                print(bin_id,type(err),err)
+            for bin_obj,err in error_bins:
+                print(bin_obj,type(err),err)
 
-    else: # images
+    ## IMAGES ##
+    else:
         img_paths = []
         if os.path.isdir(args.SRC):
             for img in glob.iglob(os.path.join(args.SRC,'**','**'), recursive=True):
-                if any([img.endswith(ext) for ext in IMG_EXTENSIONS]):
+                if img.endswith(IMG_EXTENSIONS):
                     img_paths.append(img)
         elif os.path.isfile(args.SRC) and args.SRC.endwith('.txt'): # TODO TEST: textfile img run
             with open(args.SRC,'r') as f:
                 img_paths = f.readlines()
-        elif any([args.SRC.endswith(ext) for ext in IMG_EXTENSIONS]): # single img # TODO TEST: single img run
+                img_paths = [img for img in img_paths if img.endswith(IMG_EXTENSIONS)]
+        elif args.SRC.endswith(IMG_EXTENSIONS): # single img # TODO TEST: single img run
             img_paths.append(args.SRC)
 
         # applying filter
@@ -256,15 +257,13 @@ def do_run(args):
                     if any([k in img for k in filter_keywords]): img_paths.remove(img)
 
         assert len(img_paths)>0, 'No images to process'
-        image_dataset = ImageDataset(img_paths, resize=classifier.hparams.resize)
+        image_dataset = ImageDataset(img_paths, resize=classifier.hparams.resize, input_src=args.SRC)
         image_loader = DataLoader(image_dataset, batch_size=args.batch_size,
                                   pin_memory=True, num_workers=args.loaders)
 
         trainer.test(classifier,test_dataloaders=image_loader)
 
-
-
-if __name__ == '__main__':
+def argparse_nn():
     parser = argparse.ArgumentParser(description='Train, Run, and perform other tasks related to ifcb and general image classification!')
     # TODO move most of these parser hparams to respective pytorch-lightning objects
 
@@ -283,41 +282,51 @@ if __name__ == '__main__':
     parser.add_argument('--batch', dest='batch_size', metavar='SIZE', default=108, type=int, help='Number of images per batch. Defaults is 108') # todo: auto-mode built in to ptl
     parser.add_argument('--loaders', metavar='N', default=4, type=int, help='Number of data-loading threads. 4 per GPU is typical. Default is 4') # todo: auto-mode?
 
-    ## Training Vars ##
-    train.add_argument('TRAINING_ID', help='Training ID. This value is the default value used by --outdir and --model-id.')
-    train.add_argument('MODEL', help='Select a base model. Eg: "inception_v3"') # TODO choices field. TODO: "Accepts a known model name, or a path to a specific model file for transfer learning"
-    train.add_argument('SRC', help='Directory with class-label subfolders and images. May also be a dataset-configuration csv.')
+    argparse_nn_train(train)
+    argparse_nn_run(run)
 
-    model = train.add_argument_group(title='Model Adjustments', description=None)
-    model.add_argument('--untrain', dest='pretrained', default=True, action='store_false', help='If set, initializes MODEL ~without~ pretrained neurons. Default (unset) is pretrained')
-    model.add_argument('--img-norm', nargs=2, metavar=('MEAN','STD'), help='Normalize images by MEAN and STD. This is like whitebalancing. '
-                                                                           'eg1: "0.667 0.161", eg2: "0.056,0.058,0.051 0.067,0.071,0.057"')
+    return parser
+
+def argparse_nn_train(train_subparser):
+    ## Training Vars ##
+    train_subparser.add_argument('TRAINING_ID', help='Training ID. This value is the default value used by --outdir and --model-id.')
+    train_subparser.add_argument('MODEL', help='Select a base model. Eg: "inception_v3"')
+    # TODO choices field. TODO: "Accepts a known model name, or a path to a specific model file for transfer learning"
+    train_subparser.add_argument('SRC', help='Directory with class-label subfolders and images. May also be a dataset-configuration csv.')
+
+    model = train_subparser.add_argument_group(title='Model Adjustments', description=None)
+    model.add_argument('--untrain', dest='pretrained', default=True, action='store_false',
+                       help='If set, initializes MODEL ~without~ pretrained neurons. Default (unset) is pretrained')
+    model.add_argument('--img-norm', nargs=2, metavar=('MEAN', 'STD'),
+                       help='Normalize images by MEAN and STD. This is like whitebalancing. '
+                            'eg1: "0.667 0.161", eg2: "0.056,0.058,0.051 0.067,0.071,0.057"')
     # TODO layer freezing and transfer learning params.
 
-    data = train.add_argument_group(title='Dataset Adjustments', description=None)
+    data = train_subparser.add_argument_group(title='Dataset Adjustments', description=None)
     data.add_argument('--seed', default=0, type=int, help='Set a specific seed for deterministic output & dataset-splitting reproducability.')
     data.add_argument('--split', metavar='T:V', default='80:20', help='Ratio of images per-class to split randomly into Training and Validation datasets. Randomness affected by SEED. Default is "80:20"')
-    data.add_argument('--class-config', metavar=('CSV','COL'), nargs=2, help='Skip and combine classes as defined by column COL of a special CSV configuration file')
+    data.add_argument('--class-config', metavar=('CSV', 'COL'), nargs=2, help='Skip and combine classes as defined by column COL of a special CSV configuration file')
     data.add_argument('--class-min', metavar='MIN', default=2, type=int, help='Exclude classes with fewer than MIN instances. Default is 2')
     data.add_argument('--class-max', metavar='MAX', default=None, type=int, help='Limit classes to a MAX number of instances. '
-        'If multiple datasets are specified with a dataset-configuration csv, classes from lower-priority datasets are truncated first.')
-    data.add_argument('--swap', default=False, action='store_true', help=argparse.SUPPRESS)  # dupes placeholder. may not be needed.
-    
-    epochs = train.add_argument_group(title='Epoch Parameters', description=None)
-    epochs.add_argument('--emax', metavar='MAX',default=60, type=int, help='Maximum number of training epochs. Default is 60')
+                           'If multiple datasets are specified with a dataset-configuration csv, classes from lower-priority datasets are truncated first.')
+    data.add_argument('--swap', default=False, action='store_true',
+                      help=argparse.SUPPRESS)  # dupes placeholder. may not be needed.
+
+    epochs = train_subparser.add_argument_group(title='Epoch Parameters', description=None)
+    epochs.add_argument('--emax', metavar='MAX', default=60, type=int, help='Maximum number of training epochs. Default is 60')
     epochs.add_argument('--emin', metavar='MIN', default=10, type=int, help='Minimum number of training epochs. Default is 10')
     epochs.add_argument('--estop', metavar='STOP', default=10, type=int, help='Early Stopping: Number of epochs following a best-epoch after-which to stop training. Set STOP=0 to disable. Default is 10')
 
-    augs = train.add_argument_group(title='Augmentation Options', description='Data Augmentation is a technique by which training results may improved by simulating novel input')
-    augs.add_argument('--flip', choices=['x','y','xy','x+V','y+V','xy+V'],
-        help='Training images have 50%% chance of being flipped along the designated axis: (x) vertically, (y) horizontally, (xy) either/both. May optionally specify "+V" to include Validation dataset')
+    augs = train_subparser.add_argument_group(title='Augmentation Options', description='Data Augmentation is a technique by which training results may improved by simulating novel input')
+    augs.add_argument('--flip', choices=['x', 'y', 'xy', 'x+V', 'y+V', 'xy+V'],
+                      help='Training images have 50%% chance of being flipped along the designated axis: (x) vertically, (y) horizontally, (xy) either/both. May optionally specify "+V" to include Validation dataset')
 
-    out = train.add_argument_group(title='Output Options')
+    out = train_subparser.add_argument_group(title='Output Options')
     out.add_argument('--outdir', default='training-output/{TRAINING_ID}', help='Default is "training-output/{TRAINING_ID}"')
     out.add_argument('--model-id', default='{TRAINING_ID}', help='Set a specific model id. Patterns {date} and {TRAINING_ID} are recognized. Default is "{TRAINING_ID}"')
     out.add_argument('--epochs-log', metavar='ELOG', default='epochs.csv', help='Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv')
     out.add_argument('--args-log', metavar='ALOG', default='args.yml', help='Specify a human-readable yaml filename. Includes all user-specified and default training parameters. Default is args.yml')
-    out.add_argument('--results',  dest='result_files', metavar=('FNAME','SERIES'), nargs='+', action='append', default=[],
+    out.add_argument('--results', dest='result_files', metavar=('FNAME', 'SERIES'), nargs='+', action='append', default=[],
                      help='FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats.'
                           'SERIES: Data to include in FNAME. The following are always included and need not be specified: model_id, timestamp, class_labels, input_classes, output_classes.'
                           '    Options are: image_basenames, image_fullpaths; output_scores, output_winscores; confusion_matrix (ordered by classes_by_recall);'
@@ -326,38 +335,41 @@ if __name__ == '__main__':
                           'If not invoked, default is "results.mat image_basenames output_scores counts_perclass confusion_matrix f1_perclass f1_weighted f1_macro"')
     #out.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
-    meta = train.add_argument_group(title='Metadata and Annotations')
+    meta = train_subparser.add_argument_group(title='Metadata and Annotations')
     meta.add_argument('--dataset-id', help='Associate a dataset id label with this model')
     meta.add_argument('--notes', help='Add any kind of note to the trained model. Make sure to use quotes "around your message."')
 
-    #optim = train.add_argument_group(title='Optimization', description='Adjust learning hyper parameters')
+    #optim = train_subparser.add_argument_group(title='Optimization', description='Adjust learning hyper parameters')
     #optim.add_argument('--optimizer', default='Adam', choices=['Adam'], help='Select and optimizer. Default is Adam')
     #optim.add_argument('--learning-rate',default=0.001,type=float,help='Set a learning rate. Default is 0.001')
     #optim.add_argument('--weight-decay', default='?', help="not sure where this comes in")
     #optim.add_argument('--class-norm', help='Bias results to emphasize smaller classes')
     #optim.add_argument('--batch-norm', help='i forget what this is exactly')
 
+
+def argparse_nn_run(run_subparser):
     ## Run Vars ##
-    run.add_argument('RUN_ID', help='Run ID. Used by --outdir')
-    run.add_argument('MODEL', help='Path to a previously-trained model file')
-    run.add_argument('SRC', help='Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. Directories are accessed recursively')
+    run_subparser.add_argument('RUN_ID', help='Run ID. Used by --outdir')
+    run_subparser.add_argument('MODEL', help='Path to a previously-trained model file')
+    run_subparser.add_argument('SRC', help='Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. Directories are accessed recursively')
 
-    run.add_argument('--type', dest='src_type', default='bin', choices=['bin','img'], help='File type to perform classification on. Defaults is "bin"')
-    run.add_argument('--outdir', default='run-output/{RUN_ID}', help='Default is "run-output/{RUN_ID}"')
-    run.add_argument('--outfile', default=[], action='append',
+    run_subparser.add_argument('--type', dest='src_type', default='bin', choices=['bin','img'], help='File type to perform classification on. Defaults is "bin"')
+    run_subparser.add_argument('--outdir', default='run-output/{RUN_ID}/v3/{MODEL_ID}', help='Default is "run-output/{RUN_ID}/v3/{MODEL_ID}"')
+    run_subparser.add_argument('--outfile', default=[], action='append',
         help='''Name/pattern of the output classification file.
-                If TYPE==bin, files are created on a per-bin basis. OUTFILE must include "{bin}", which will be replaced with the a bin's id.
+                If TYPE==bin, files are created on a per-bin basis. OUTFILE must include "{BIN_ID}", which will be replaced with the a bin's id.
+                A few patters are recognized: {BIN_ID}, {BIN_YEAR}, {BIN_DATE}, {INPUT_SUBDIRS}.
                 A few output file formats are recognized: .json, .mat, and .h5 (hdf).
-                Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "img_results.json".
-             ''') # TODO? If TYPE==img, "{dir}" in OUTFILE will be replaced with the parent directory of classified images."
-    run.add_argument('--filter', nargs='+', metavar=('IN|OUT','KEYWORD'),
+                Default for TYPE==bin is "D{BIN_YEAR}/D{BIN_DATE}/{BIN_ID}_class.h5"; Default for TYPE==img is "img_results.json".
+             ''')
+    run_subparser.add_argument('--filter', nargs='+', metavar=('IN|OUT','KEYWORD'),
         help='Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. KEYWORD may also be a text file containing KEYWORDs, line-deliminated.')
-    run.add_argument('--clobber', action='store_true', help='If set, already processed bins in OUTDIR are reprocessed. By default, if an OUTFILE exists already the associated bin is not reprocessed.')
-    run.add_argument('--gobig', action='store_true', help=argparse.SUPPRESS)
-    #run.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
+    run_subparser.add_argument('--clobber', action='store_true',
+        help='If set, already processed bins in OUTDIR are reprocessed. By default, if an OUTFILE exists already the associated bin is not reprocessed.')
+    run_subparser.add_argument('--gobig', action='store_true', help=argparse.SUPPRESS)
+    #run_subparser.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
-    args = parser.parse_args()
-
+def argparse_nn_runtimeparams(args):
     # add timestamp
     args.cmd_timestamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')
 
@@ -367,10 +379,25 @@ if __name__ == '__main__':
             args.version = f.read().strip()
     except FileNotFoundError:
         args.version = None
-    main(args)
+
+    ## GPU torch setup ## - use all available GPU's
+    # pytorch uses the ~index~ of CUDA_VISIBLE_DEVICES.
+    # So if gpus == [3,4] then device "cuda:0" == GPU no. 3
+    #                      and device "cuda:1" == GPU no. 4
+    if torch.cuda.is_available():
+        args.gpus = [int(gpu) for gpu in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
+    else: args.gpus = None
+
+
+
+if __name__ == '__main__':
+
+    parser = argparse_nn()
+    input_args = parser.parse_args()
+    argparse_nn_runtimeparams(input_args)
+    main(input_args)
 
 # TODO move dataloaders to NeustonModel for auto-batch-size enabling
-# TODO utility script to fine img-norm MEAN STD
 # TODO run on larger, current dataset using class-config
 # TODO implement plots (matplotlib vs plotly?)
 # TODO implement hpc/slurm utility script (test-tube)
@@ -378,4 +405,3 @@ if __name__ == '__main__':
 # update conda env: conda env update -f environment.yml --prune
 # Quick hpc access: ssh poseidon; ./gpu_ifcbnn.sh
 # TODO unittests?
-#T=iv3_test;R=iv3_test_run;time ./neuston_net.py TRAIN $T inception_v3 training-data/testset --class-config training-data/testset.config.csv col1 --class-min 10 --results results.json image_basenames output_scores --results results.mat image_basenames output_scores --results results.h5 image_basenames output_scores && time ./neuston_net.py RUN $R training-output/$T/$T.ptl run-data/testset --outfile hdf/{bin}.h5 --outfile mat/{bin}.mat --outfile json/{bin}.json

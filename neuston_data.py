@@ -379,8 +379,9 @@ class ImageDataset(Dataset):
     adapted from: https://gist.github.com/andrewjong/6b02ff237533b3b2c554701fb53d5c4d
     """
 
-    def __init__(self, image_paths, resize=244):
-        self.image_paths = [img for img in image_paths if any([img.endswith(ext) for ext in datasets.folder.IMG_EXTENSIONS])]
+    def __init__(self, image_paths, resize=244, input_src=None):
+        self.input_src = input_src
+        self.image_paths = [img for img in image_paths if img.endswith(datasets.folder.IMG_EXTENSIONS)]
 
         # use 299x299 for inception_v3, all other models use 244x244
         self.transform = transforms.Compose([transforms.Resize([resize, resize]),

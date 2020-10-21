@@ -61,7 +61,7 @@ class ExperimentWriter(object):
         if step is None:
             step = len(self.metrics)
 
-        metrics = {k: _handle_value(v) for k, v in metrics_dict.items()}
+        metrics = {k: _handle_value(v) for k, v in metrics_dict.items() if k not in ['input_classes','output_classes','input_srcs','outputs'] }
         if len(metrics)>1:
             #metrics['step'] = step
             self.metrics.append(metrics)

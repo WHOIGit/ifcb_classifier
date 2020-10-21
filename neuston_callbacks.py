@@ -27,7 +27,6 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
 
     def on_validation_end(self, trainer, pl_module):
         log = trainer.callback_metrics # flattened dict
-        del log['loss']  # it's from the last training STEP and non-cumulative
         #log: val_loss input_classes output_classes input_srcs outputs epoch best train_loss f1_macro f1_weighted
 
         if not(log['best'] or not self.best_only):
@@ -145,18 +144,19 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
                 elif series in int_data: f.create_dataset(series, data=results[series], compression='gzip', dtype='int16')
                 elif isinstance(results[series],np.ndarray):
                     f.create_dataset(series, data=results[series], compression='gzip', dtype='float16')
-                else: print('hdf results: WE MISSED THIS ONE:',series)
+                else: raise UserWarning('hdf results: WE MISSED THIS ONE: {}'.format(series))
 
 
 ## Running ##
-def save_run_results(input_images, output_scores, class_labels, timestamp, outdir, outfile, bin_id=None, model_id=None):
+def save_run_results(input_images, output_scores, class_labels, timestamp, outdir, outfile, model_id=None, input_obj=None):
     output_classranks = np.max(output_scores, axis=1)
     output_classes = np.argmax(output_scores, axis=1)
 
     assert output_scores.shape[0] == len(output_classes), 'wrong number inputs-to-outputs'
     assert output_scores.shape[1] == len(class_labels), 'wrong number of class labels'
 
-    results = dict(model_id=model_id,
+    results = dict(version='v3',
+                   model_id=model_id,
                    timestamp=timestamp,
                    class_labels=class_labels,
                    input_images=input_images,
@@ -164,15 +164,38 @@ def save_run_results(input_images, output_scores, class_labels, timestamp, outdi
                    output_scores=output_scores)
 
     outfile = os.path.join(outdir, outfile)
-    if bin_id:
-        results['bin'] = bin_id
+    if isinstance(input_obj,ifcb.Pid):
+        bin_obj = input_obj
+        results['bin_id'] = bin_obj.pid
         results['roi_numbers'] = [ifcb.Pid(img).target for img in input_images]
-        outfile = outfile.format(bin=bin_id)
+        outfile_dict = dict(BIN_ID=bin_obj.pid, INPUT_SUBDIRS=bin_obj.namespace,
+                            BIN_YEAR=bin_obj.year, BIN_DATE=bin_obj.yearday)
+        outfile = outfile.format(**outfile_dict).replace(2*os.sep,os.sep)
+        os.makedirs(os.path.dirname(outfile), exist_ok=True)
+        _save_run_results(outfile, results)
     else:  # ImageDataset
-        pass
-    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+        if '{INPUT_SUBDIRS}' in outfile:
+            dir_groups = {}
+            input_src = input_obj if os.path.isdir(input_obj) else ''
+            for img_path,img_classidx,img_scores in zip(input_images,output_classes,output_scores):
+                parent_dir = os.path.dirname(img_path.replace(input_src, ''))+os.sep
 
-    _save_run_results(outfile, results)
+                if parent_dir not in dir_groups:
+                    dir_groups[parent_dir] = {k: v if k not in ['input_images','output_classes','output_scores'] else [] for k,v in results.items()}
+                dir_groups[parent_dir]['input_images'].append(os.path.basename(img_path))
+                dir_groups[parent_dir]['output_classes'].append(img_classidx)
+                dir_groups[parent_dir]['output_scores'].append(img_scores)
+            for parent_dir,sub_results in dir_groups.items():
+                sub_outfile = outfile.format(INPUT_SUBDIRS=parent_dir)
+                os.makedirs(os.path.dirname(sub_outfile),exist_ok=True)
+                sub_results['output_classes'] = np.asarray(sub_results['output_classes'], dtype=results['output_classes'].dtype)
+                sub_results['output_scores'] = np.asarray(sub_results['output_scores'], dtype=results['output_scores'].dtype)
+                _save_run_results(sub_outfile, sub_results)
+
+        else: #easy
+            os.makedirs(os.path.dirname(outfile), exist_ok=True)
+            _save_run_results(outfile, results)
+
 
 def _save_run_results(outfile, results):
     # handles .json, .mat, .h5 files
@@ -182,13 +205,14 @@ def _save_run_results(outfile, results):
         # results: model_id timestamp class_labels (bin + roi_numbers)
         #          input_images output_classes output_scores
 
-        output = dict(model_id = results['model_id'],
+        output = dict(version = results['version'],
+                      model_id = results['model_id'],
                       timestamp = results['timestamp'],
                       class_labels = results['class_labels'],
                       output_scores = results['output_scores'].tolist(),
                       output_classes = results['output_classes'].tolist() )
-        if 'bin' in results:
-            output['bin'] = results['bin']
+        if 'bin_id' in results:
+            output['bin_id'] = results['bin_id']
             output['roi_numbers'] = results['roi_numbers']
         else:
             output['input_images'] = results['input_images']
@@ -203,12 +227,13 @@ def _save_run_results(outfile, results):
         output=dict()
         # increment indexes, since matlab is not zero-indexed
         output['output_classes'] = results['output_classes'].astype('u4')+1
+        output['version'] = results['version']
         output['model_id'] = results['model_id']
         output['timestamp'] = results['timestamp']
         output['output_scores'] = results['output_scores'].astype('f4')
         output['class_labels'] = np.asarray(results['class_labels'], dtype='object')
-        if 'bin' in results:
-            output['bin'] = results['bin']
+        if 'bin_id' in results:
+            output['bin_id'] = results['bin_id']
             output['roi_numbers'] = results['roi_numbers']#.astype('u4') #not numpy yet, but thats fine it seems
         else:
             output['input_images'] = np.asarray(results['input_images'], dtype='object')
@@ -221,13 +246,14 @@ def _save_run_results(outfile, results):
 
         with h5.File(outfile, 'w') as f:
             meta = f.create_dataset('metadata', data=h5.Empty('f'))
+            meta.attrs['version'] = results['version']
             meta.attrs['model_id'] = results['model_id']
             meta.attrs['timestamp'] = results['timestamp']
             f.create_dataset('output_classes', data=results['output_classes'], compression='gzip', dtype='float16')
             f.create_dataset('output_scores', data=results['output_scores'], compression='gzip', dtype='float16')
             f.create_dataset('class_labels', data=np.string_(results['class_labels']), compression='gzip', dtype=h5.string_dtype())
-            if results['bin']:
-                meta.attrs['bin'] = results['bin']
+            if results['bin_id']:
+                meta.attrs['bin_id'] = results['bin_id']
                 f.create_dataset('roi_numbers', data=results['roi_numbers'], compression='gzip', dtype='uint16')
             else:
                 f.create_dataset('input_images', data=np.string_(results['input_images']), compression='gzip', dtype=h5.string_dtype())
@@ -252,11 +278,10 @@ class SaveTestResults(ptl.callbacks.base.Callback):
             RRs = [RRs]
 
         for rr in RRs:
-            bin_id = rr.bin_id
+            input_obj = rr.input_obj
             output_scores = rr.outputs
             input_images = rr.inputs
             model_id = pl_module.hparams.model_id
             class_labels = pl_module.hparams.classes
 
-            save_run_results(input_images, output_scores, class_labels, self.timestamp, self.outdir, self.outfile, bin_id, model_id)
-
+            save_run_results(input_images, output_scores, class_labels, self.timestamp, self.outdir, self.outfile, model_id, input_obj)
