@@ -14,6 +14,8 @@ from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from torchvision.datasets.folder import IMG_EXTENSIONS
 
+#TODO: from pytorch_lightning.loggers import CSVLogger
+
 # project imports
 import ifcb
 from neuston_models import NeustonModel
@@ -37,8 +39,7 @@ def do_training(args):
 
     # ARG CORRECTIONS AND CHECKS
     date_str = args.cmd_timestamp.split('T')[0]
-    args.outdir = args.outdir.format(date=date_str, TRAINING_ID=args.TRAINING_ID)
-    args.model_id = args.model_id.format(date=date_str, TRAINING_ID=args.TRAINING_ID)
+    args.model_id = args.model_id.format(TRAIN_DATE=date_str, TRAIN_ID=args.TRAIN_ID)
 
     # make sure output directory exists
     os.makedirs(args.outdir,exist_ok=True)
@@ -122,19 +123,13 @@ def do_run(args):
 
     # load model
     classifier = NeustonModel.load_from_checkpoint(args.MODEL)
-    #classifier.hparams.run_outfile = args.outfile
-    #classifier.hparams.run_outdir = args.outdir
-    #classifier.hparams.run_timestamp = args.cmd_timestamp
     seed_everything(classifier.hparams.seed)
 
     # ARG CORRECTIONS AND CHECKS
     if os.path.isdir(args.SRC) and not args.SRC.endswith(os.sep): args.SRC = args.SRC+os.sep
-    model_id = classifier.hparams.model_id
-    run_date_str,run_time_str = args.cmd_timestamp.split('T')
-    args.outdir = args.outdir.format(RUN_DATE=run_date_str, RUN_ID=args.RUN_ID, MODEL_ID=model_id)
 
     # set OUTFILE defaults
-    if args.outfile == []:
+    if not args.outfile:
         if args.src_type == 'bin': args.outfile=['D{BIN_YEAR}/D{BIN_DATE}/{BIN_ID}_class.h5']
         if args.src_type == 'img': args.outfile = ['img_results.json']
 
@@ -263,9 +258,12 @@ def do_run(args):
 
         trainer.test(classifier,test_dataloaders=image_loader)
 
-def argparse_nn():
-    parser = argparse.ArgumentParser(description='Train, Run, and perform other tasks related to ifcb and general image classification!')
-    # TODO move most of these parser hparams to respective pytorch-lightning objects
+
+def argparse_nn(parser=None):
+
+    if parser is None:
+        parser = argparse.ArgumentParser(description='Train, Run, and perform other tasks related to ifcb and general image classification!')
+        # TODO move most of these parser hparams to respective pytorch-lightning objects
 
     # Create subparsers
     subparsers = parser.add_subparsers(dest='cmd_mode', help='These sub-commands are mutually exclusive. Note: optional arguments (below) must be specified before "TRAIN" or "RUN"')
@@ -279,8 +277,9 @@ def argparse_nn():
     #config= subparsers.add_parser('classconfig', help='create a default class-config ready csv for a given dataset')
 
     ## Common Vars ##
-    parser.add_argument('--batch', dest='batch_size', metavar='SIZE', default=108, type=int, help='Number of images per batch. Defaults is 108') # todo: auto-mode built in to ptl
-    parser.add_argument('--loaders', metavar='N', default=4, type=int, help='Number of data-loading threads. 4 per GPU is typical. Default is 4') # todo: auto-mode?
+    common = parser.add_argument_group(title='NN Common Args', description=None)
+    common.add_argument('--batch', dest='batch_size', metavar='SIZE', default=108, type=int, help='Number of images per batch. Defaults is 108') # todo: auto-mode built in to ptl
+    common.add_argument('--loaders', metavar='N', default=4, type=int, help='Number of data-loading threads. 4 per GPU is typical. Default is 4') # todo: auto-mode?
 
     argparse_nn_train(train)
     argparse_nn_run(run)
@@ -289,10 +288,10 @@ def argparse_nn():
 
 def argparse_nn_train(train_subparser):
     ## Training Vars ##
-    train_subparser.add_argument('TRAINING_ID', help='Training ID. This value is the default value used by --outdir and --model-id.')
+    train_subparser.add_argument('SRC', help='Directory with class-label subfolders and images. May also be a dataset-configuration csv.')
     train_subparser.add_argument('MODEL', help='Select a base model. Eg: "inception_v3"')
     # TODO choices field. TODO: "Accepts a known model name, or a path to a specific model file for transfer learning"
-    train_subparser.add_argument('SRC', help='Directory with class-label subfolders and images. May also be a dataset-configuration csv.')
+    train_subparser.add_argument('TRAIN_ID', help='Training ID. This value is the default value used by --outdir and --model-id.')
 
     model = train_subparser.add_argument_group(title='Model Adjustments', description=None)
     model.add_argument('--untrain', dest='pretrained', default=True, action='store_false',
@@ -322,11 +321,11 @@ def argparse_nn_train(train_subparser):
                       help='Training images have 50%% chance of being flipped along the designated axis: (x) vertically, (y) horizontally, (xy) either/both. May optionally specify "+V" to include Validation dataset')
 
     out = train_subparser.add_argument_group(title='Output Options')
-    out.add_argument('--outdir', default='training-output/{TRAINING_ID}', help='Default is "training-output/{TRAINING_ID}"')
-    out.add_argument('--model-id', default='{TRAINING_ID}', help='Set a specific model id. Patterns {date} and {TRAINING_ID} are recognized. Default is "{TRAINING_ID}"')
+    out.add_argument('--outdir', default='training-output/{TRAIN_ID}', help='Default is "training-output/{TRAIN_ID}"')
+    out.add_argument('--model-id', default='{TRAIN_ID}', help='Set a specific model id. Patterns {TRAIN_DATE} and {TRAIN_ID} are recognized. Default is "{TRAIN_ID}"')
     out.add_argument('--epochs-log', metavar='ELOG', default='epochs.csv', help='Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv')
     out.add_argument('--args-log', metavar='ALOG', default='args.yml', help='Specify a human-readable yaml filename. Includes all user-specified and default training parameters. Default is args.yml')
-    out.add_argument('--results', dest='result_files', metavar=('FNAME', 'SERIES'), nargs='+', action='append', default=[],
+    out.add_argument('--results', dest='result_files', metavar=('FNAME', 'SERIES'), nargs='+', action='append',
                      help='FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats.'
                           'SERIES: Data to include in FNAME. The following are always included and need not be specified: model_id, timestamp, class_labels, input_classes, output_classes.'
                           '    Options are: image_basenames, image_fullpaths; output_scores, output_winscores; confusion_matrix (ordered by classes_by_recall);'
@@ -349,13 +348,13 @@ def argparse_nn_train(train_subparser):
 
 def argparse_nn_run(run_subparser):
     ## Run Vars ##
-    run_subparser.add_argument('RUN_ID', help='Run ID. Used by --outdir')
-    run_subparser.add_argument('MODEL', help='Path to a previously-trained model file')
     run_subparser.add_argument('SRC', help='Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. Directories are accessed recursively')
+    run_subparser.add_argument('MODEL', help='Path to a previously-trained model file')
+    run_subparser.add_argument('RUN_ID', help='Run ID. Used by --outdir')
 
     run_subparser.add_argument('--type', dest='src_type', default='bin', choices=['bin','img'], help='File type to perform classification on. Defaults is "bin"')
     run_subparser.add_argument('--outdir', default='run-output/{RUN_ID}/v3/{MODEL_ID}', help='Default is "run-output/{RUN_ID}/v3/{MODEL_ID}"')
-    run_subparser.add_argument('--outfile', default=[], action='append',
+    run_subparser.add_argument('--outfile', action='append',
         help='''Name/pattern of the output classification file.
                 If TYPE==bin, files are created on a per-bin basis. OUTFILE must include "{BIN_ID}", which will be replaced with the a bin's id.
                 A few patters are recognized: {BIN_ID}, {BIN_YEAR}, {BIN_DATE}, {INPUT_SUBDIRS}.
@@ -388,6 +387,17 @@ def argparse_nn_runtimeparams(args):
         args.gpus = [int(gpu) for gpu in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
     else: args.gpus = None
 
+    # parse args.outdir value
+    proc_outdir(args)
+
+
+def proc_outdir(args):
+    run_date_str, run_time_str = args.cmd_timestamp.split('T')
+    if args.cmd_mode=='TRAIN':
+        args.outdir = args.outdir.format(TRAIN_DATE=run_date_str, TRAIN_ID=args.TRAIN_ID)
+    elif args.cmd_mode=='RUN':
+        model_id = NeustonModel.load_from_checkpoint(args.MODEL).hparams.model_id
+        args.outdir = args.outdir.format(RUN_DATE=run_date_str, RUN_ID=args.RUN_ID, MODEL_ID=model_id)
 
 
 if __name__ == '__main__':
@@ -400,7 +410,6 @@ if __name__ == '__main__':
 # TODO move dataloaders to NeustonModel for auto-batch-size enabling
 # TODO run on larger, current dataset using class-config
 # TODO implement plots (matplotlib vs plotly?)
-# TODO implement hpc/slurm utility script (test-tube)
 # TODO dupes autorunner via hpc/slurm utility^
 # update conda env: conda env update -f environment.yml --prune
 # Quick hpc access: ssh poseidon; ./gpu_ifcbnn.sh

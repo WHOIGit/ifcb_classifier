@@ -43,11 +43,11 @@ Created Model and validation results will be saved under `training-output/TRAIN_
 conda activate ifcbnn
 
 ## PARAMS ##
-TRAIN_ID=ExampleTrainingID
-MODEL=inception_v3
 DATASET=training-data/ExampleTrainingData
+MODEL=inception_v3
+TRAIN_ID=ExampleTrainingID
 
-python neuston_net.py TRAIN "$TRAIN_ID" "$MODEL" "$DATASET"
+python neuston_net.py TRAIN "$DATASET" "$MODEL" "$TRAIN_ID"
 
 ```
 Here are the default behaviors for the above command.
@@ -71,9 +71,9 @@ usage: neuston_net.py TRAIN [-h] [--untrain] [--img-norm MEAN STD] [--seed SEED]
                             TRAINING_ID MODEL SRC
 
 positional arguments:
-  TRAINING_ID           Training ID. This value is the default value used by --outdir and --model-id.
-  MODEL                 Select a base model. Eg: "inception_v3"
   SRC                   Directory with class-label subfolders and images. May also be a dataset-configuration csv.
+  MODEL                 Select a base model. Eg: "inception_v3"
+  TRAIN_ID              Training ID. This value is the default value used by --outdir and --model-id.
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -133,11 +133,11 @@ Output Options:
 conda activate ifcbnn
 
 ## PARAMS ##
-RUN_ID=ExampleRunID
-MODEL=training-output/TrainedExample/TrainedExample.ptl
 DATASET=run-data/ExampleDataset
+MODEL=training-output/TrainedExample/TrainedExample.ptl
+RUN_ID=ExampleRunID
 
-python neuston_net.py RUN "$RUN_ID" "$MODEL" "$DATASET"
+python neuston_net.py RUN "$DATASET" "$MODEL" "$RUN_ID"
 
 ```
 Here are the default behaviors for the above command.
@@ -152,15 +152,15 @@ usage: neuston_net.py RUN [-h] [--type {bin,img}] [--outdir OUTDIR] [--outfile O
                           RUN_ID MODEL SRC
 
 positional arguments:
-  RUN_ID                Run ID. Used by --outdir
+  SRC                   Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. 
+                        Directories are accessed recursively.
   MODEL                 Path to a previously-trained model file
-  SRC                   Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. Directories are
-                        accessed recursively
+  RUN_ID                Run ID. Used by --outdir
 
 optional arguments:
   -h, --help            show this help message and exit
   --type {bin,img}      File type to perform classification on. Defaults is "bin"
-  --outdir OUTDIR       Default is "run-output/{RUN_ID}"
+  --outdir OUTDIR       Default is "'run-output/{RUN_ID}/v3/{MODEL_ID}"
   --outfile OUTFILE     Name/pattern of the output classification file. 
                         If TYPE==bin, "{bin}" in OUTFILE will be replaced with the bin id on a per-bin basis. 
                         A few output file formats are recognized: .json .mat .h5 (hdf).
