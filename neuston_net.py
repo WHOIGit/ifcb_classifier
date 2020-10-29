@@ -12,15 +12,13 @@ import torch
 from torch.utils.data import DataLoader
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.loggers.csv_logs import CSVLogger,ExperimentWriter
 from torchvision.datasets.folder import IMG_EXTENSIONS
-
-#TODO: from pytorch_lightning.loggers import CSVLogger
 
 # project imports
 import ifcb
 from neuston_models import NeustonModel
 from neuston_callbacks import SaveValidationResults, SaveTestResults
-from csv_logger import CSVLogger  # ptl_v0.8 does not have this but ptl_v0.9 does
 from neuston_data import get_trainval_datasets, IfcbBinDataset, ImageDataset
 
 ## NOTES ##
@@ -33,6 +31,8 @@ def main(args):
         do_training(args)
     else: # RUN
         do_run(args)
+
+    print('\nDONE!')
 
 
 def do_training(args):
@@ -76,8 +76,18 @@ def do_training(args):
     validation_loader = DataLoader(validation_dataset, pin_memory=True, shuffle=False,
                                    batch_size=args.batch_size, num_workers=args.loaders)
 
-    # Setup Trainer
+    # Gerry Rig Logger
+    class ExperimentWriter_hack(ExperimentWriter):
+        def log_metrics(self, metrics_dict, step=None):
+            _handle_value = lambda v: v.item() if isinstance(v, torch.Tensor) else v
+            metrics = {k: _handle_value(v) for k, v in metrics_dict.items()
+                       if k not in ['input_classes', 'output_classes', 'input_srcs', 'outputs']}
+            self.metrics.append(metrics)
     logger = CSVLogger(save_dir=os.path.join(args.outdir,'logs'), name='default', version=None)
+    os.makedirs(logger.root_dir, exist_ok=True)
+    logger._experiment = ExperimentWriter_hack(log_dir=logger.log_dir)
+
+    # Setup Trainer
     chkpt_path = os.path.join(args.outdir, 'chkpts')
     os.makedirs(chkpt_path, exist_ok=True)
     trainer = Trainer(deterministic=True, logger=logger,
@@ -263,18 +273,12 @@ def argparse_nn(parser=None):
 
     if parser is None:
         parser = argparse.ArgumentParser(description='Train, Run, and perform other tasks related to ifcb and general image classification!')
-        # TODO move most of these parser hparams to respective pytorch-lightning objects
+        # TODO move most of these parser hparams to respective pytorch-lightning objects?
 
     # Create subparsers
     subparsers = parser.add_subparsers(dest='cmd_mode', help='These sub-commands are mutually exclusive. Note: optional arguments (below) must be specified before "TRAIN" or "RUN"')
     train = subparsers.add_parser('TRAIN', help='Train a new model')
     run = subparsers.add_parser('RUN', help='Run a previously trained model')
-    # TODO the below to be included later
-    #check = subparsers.add_parser('check', help='Run and compare a trained model against its validation dataset results')
-    #dupes = subparsers.add_parser('dupes', help='Perform a special training') # this may be best suited to it's own "test-tube" based HPC-enabled module.
-    # TODO the below may be better suited to a utils module
-    #norm = subparsers.add_parser('norm', help='Determine the MEAN and STD values to use for --img-norm')
-    #config= subparsers.add_parser('classconfig', help='create a default class-config ready csv for a given dataset')
 
     ## Common Vars ##
     common = parser.add_argument_group(title='NN Common Args', description=None)
@@ -408,7 +412,6 @@ if __name__ == '__main__':
     main(input_args)
 
 # TODO move dataloaders to NeustonModel for auto-batch-size enabling
-# TODO run on larger, current dataset using class-config
 # TODO implement plots (matplotlib vs plotly?)
 # TODO dupes autorunner via hpc/slurm utility^
 # update conda env: conda env update -f environment.yml --prune
