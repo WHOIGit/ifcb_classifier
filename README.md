@@ -120,7 +120,7 @@ Output Options:
                                 model_id, timestamp, class_labels, input_classes, output_classes.
                                 Options are: image_basenames image_fullpaths
                                              output_scores output_winscores 
-                                             confusion_matrix (ordered by classes_by_recall),
+                                             confusion_matrix
                                              classes_by_{count|f1|recall|precision}
                                              {f1|recall|precision}_{macro|weighted|perclass} 
                                              {counts|val_counts|train_counts}_perclass

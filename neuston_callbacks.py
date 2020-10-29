@@ -67,8 +67,8 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
             classes_by[stat] = sorted(class_idxs, key=lambda idx: (stats[stat+'_perclass'][idx]), reverse=True)
 
         # Confusion matrix
-        confusion_matrix = metrics.confusion_matrix(input_classes,output_classes,labels=classes_by['recall'], normalize=None)
-
+        #confusion_matrix = metrics.confusion_matrix(input_classes,output_classes,labels=classes_by['recall'], normalize=None)
+        confusion_matrix = metrics.confusion_matrix(input_classes, output_classes, labels=class_idxs, normalize=None)
 
         ## PASSING IT DOWN TO OUTPUTS ##
 
@@ -86,7 +86,7 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
         if 'output_scores' in self.series: results['output_scores'] = output_scores
         if 'confusion_matrix' in self.series :
             results['confusion_matrix'] = confusion_matrix
-            results['classes_by_recall'] = classes_by['recall'] # always include with confusion matrix
+            #results['classes_by_recall'] = classes_by['recall'] # no longer included with cm
         if 'counts_perclass' in self.series: results['counts_perclass'] = counts_perclass
         if 'val_counts_perclass' in self.series: results['val_counts_perclass'] = val_counts_perclass
         if 'train_counts_perclass' in self.series: results['val_counts_perclass'] = val_counts_perclass

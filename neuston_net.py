@@ -328,7 +328,7 @@ def argparse_nn_train(train_subparser):
     out.add_argument('--results', dest='result_files', metavar=('FNAME', 'SERIES'), nargs='+', action='append',
                      help='FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats.'
                           'SERIES: Data to include in FNAME. The following are always included and need not be specified: model_id, timestamp, class_labels, input_classes, output_classes.'
-                          '    Options are: image_basenames, image_fullpaths; output_scores, output_winscores; confusion_matrix (ordered by classes_by_recall);'
+                          '    Options are: image_basenames, image_fullpaths; output_scores, output_winscores; confusion_matrix;'
                           '                 classes_by_{count|f1|recall|precision}; {f1|recall|precision}_{macro|weighted|perclass}; {counts|val_counts|train_counts}_perclass.'
                           '--results may be specified multiple times in order to create different files. '
                           'If not invoked, default is "results.mat image_basenames output_scores counts_perclass confusion_matrix f1_perclass f1_weighted f1_macro"')
