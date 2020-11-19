@@ -124,10 +124,6 @@ class NeustonModel(ptl.LightningModule):
         f1_weighted = metrics.f1_score(input_classes, output_classes, average='weighted')
         f1_macro = metrics.f1_score(input_classes, output_classes, average='macro')
 
-        log = dict(epoch=self.current_epoch, best = self.best_epoch==self.current_epoch,
-                   train_loss=self.agg_train_loss, val_loss=validation_loss,
-                   f1_macro=f1_macro, f1_weighted=f1_weighted)
-
         eoe = 'Best Epoch: {}, train_loss: {:.3f}, val_loss: {:.3f}, val_f1_w={:02.1f}%, val_f1_m={:02.1f}%'
         eoe = eoe.format(True if self.current_epoch==self.best_epoch else self.best_epoch+1, self.agg_train_loss, validation_loss, 100*f1_weighted, 100*f1_macro)
         print(eoe, flush=True, end='\n\n')  # so slurm output can be followed along

@@ -125,7 +125,9 @@ Output Options:
                                              {f1|recall|precision}_{macro|weighted|perclass} 
                                              {counts|val_counts|train_counts}_perclass
                         --results may be specified multiple times in order to create different files. 
-                        If not invoked, default is: "results.mat image_basenames output_scores counts_perclass confusion_matrix f1_perclass f1_weighted f1_macro"
+                        If not invoked, default is: 
+                                "results.mat training_image_basenames training_classes image_basenames input_classes 
+                                 output_scores confusion_matrix counts_perclass f1_perclass f1_weighted f1_macro"
 ```
 ## Model Running
 

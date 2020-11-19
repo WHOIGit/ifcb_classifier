@@ -41,6 +41,9 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
         val_counts_perclass = val_dataset.count_perclass
         train_counts_perclass = train_dataset.count_perclass
         counts_perclass = [vcount+tcount for vcount,tcount in zip(val_counts_perclass, train_counts_perclass)] # element-wise addition
+        training_image_fullpaths = train_dataset.images
+        training_image_basenames = [os.path.splitext(os.path.basename(img))[0] for img in training_image_fullpaths]
+        training_classes = train_dataset.targets
 
         output_scores = log['outputs']
         output_winscores = np.max(output_scores, axis=1)
@@ -82,6 +85,9 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
         # optional values
         if 'image_fullpaths' in self.series: results['image_fullpaths'] = image_fullpaths
         if 'image_basenames' in self.series: results['image_basenames'] = image_basenames
+        if 'training_image_fullpaths' in self.series: results['training_image_fullpaths'] = training_image_fullpaths
+        if 'training_image_basenames' in self.series: results['training_image_basenames'] = training_image_basenames
+        if 'training_classes' in self.series: results['training_classes'] = training_classes
         if 'output_winscores' in self.series: results['output_winscores'] = output_winscores
         if 'output_scores' in self.series: results['output_scores'] = output_scores
         if 'confusion_matrix' in self.series :
@@ -110,16 +116,18 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
         if outfile.endswith('.h5'): self._save_validation_results_hdf(outfile,results)
 
     def _save_validation_results_json(self,outfile,results):
-        for series in results: # numpy vals
-            if isinstance(results[series], np.ndarray): results[series] = results[series].tolist()
+        for series in results: # convert numpy arrays to list
+            if isinstance(results[series], np.ndarray):
+                results[series] = results[series].tolist()
+        # write json file
         with open(outfile, 'w') as f:
             json.dump(results, f)
 
     def _save_validation_results_mat(self,outfile,results):
         # index ints
-        idx_data =['input_classes','output_classes']
-        idx_data.extend( ['classes_by_'+stat for stat in 'f1 recall precision count'.split()] )
-        str_data = ['class_labels','image_fullpaths','image_basenames']
+        idx_data = ['input_classes','output_classes','training_classes']
+        idx_data += ['classes_by_'+stat for stat in 'f1 recall precision count'.split()]
+        str_data = ['class_labels','image_fullpaths','image_basenames','training_image_fullpaths','training_image_basenames']
 
         for series in results:
             if isinstance(results[series], np.ndarray): results[series] = results[series].astype('f4')
@@ -133,9 +141,10 @@ class SaveValidationResults(ptl.callbacks.base.Callback):
     def _save_validation_results_hdf(self,outfile,results):
         attrib_data = ['model_id', 'timestamp']
         attrib_data += 'f1_weighted recall_weighted precision_weighted f1_macro recall_macro precision_macro'.split()
-        int_data = ['input_classes', 'output_classes'] + 'counts_perclass val_counts_perclass train_counts_perclass'.split()
-        int_data.extend(['classes_by_'+stat for stat in 'f1 recall precision count'.split()])
-        string_data = ['class_labels', 'image_fullpaths', 'image_basenames']
+        int_data = ['input_classes', 'output_classes', 'training_classes']
+        int_data += 'counts_perclass val_counts_perclass train_counts_perclass'.split()
+        int_data += ['classes_by_'+stat for stat in 'f1 recall precision count'.split()]
+        string_data = ['class_labels', 'image_fullpaths', 'image_basenames', 'training_image_fullpaths', 'training_image_basenames']
         with h5.File(outfile, 'w') as f:
             meta = f.create_dataset('metadata', data=h5.Empty('f'))
             for series in results:

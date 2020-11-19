@@ -50,7 +50,7 @@ def do_training(args):
 
     validation_results_callbacks = []
     if not args.result_files:
-        args.result_files = ['results.mat image_basenames output_scores counts_perclass confusion_matrix f1_perclass f1_weighted f1_macro'.split()]
+        args.result_files = ['results.mat training_image_basenames training_classes image_basenames input_classes output_scores confusion_matrix counts_perclass f1_perclass f1_weighted f1_macro'.split()]
     for result_file in args.result_files:
         svr = SaveValidationResults(outdir=args.outdir, outfile=result_file[0], series=result_file[1:])
         validation_results_callbacks.append(svr)
@@ -335,7 +335,7 @@ def argparse_nn_train(train_subparser):
                           '    Options are: image_basenames, image_fullpaths; output_scores, output_winscores; confusion_matrix;'
                           '                 classes_by_{count|f1|recall|precision}; {f1|recall|precision}_{macro|weighted|perclass}; {counts|val_counts|train_counts}_perclass.'
                           '--results may be specified multiple times in order to create different files. '
-                          'If not invoked, default is "results.mat image_basenames output_scores counts_perclass confusion_matrix f1_perclass f1_weighted f1_macro"')
+                          'If not invoked, default is "results.mat training_image_basenames training_classes image_basenames input_classes output_scores confusion_matrix counts_perclass f1_perclass f1_weighted f1_macro"')
     #out.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
     meta = train_subparser.add_argument_group(title='Metadata and Annotations')
@@ -369,7 +369,7 @@ def argparse_nn_run(run_subparser):
         help='Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. KEYWORD may also be a text file containing KEYWORDs, line-deliminated.')
     run_subparser.add_argument('--clobber', action='store_true',
         help='If set, already processed bins in OUTDIR are reprocessed. By default, if an OUTFILE exists already the associated bin is not reprocessed.')
-    run_subparser.add_argument('--gobig', action='store_true', help=argparse.SUPPRESS)
+    run_subparser.add_argument('--gobig', action='store_true', help=argparse.SUPPRESS)  # aggregates bins
     #run_subparser.add_argument('-p','--plot', metavar=('FNAME','PARAM'), nargs='+', action='append', help='Make Plots') # TODO plots
 
 def argparse_nn_runtimeparams(args):
