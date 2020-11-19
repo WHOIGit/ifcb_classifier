@@ -328,6 +328,15 @@ def get_trainval_datasets(args):
 
     return training_dataset, validation_dataset
 
+def parse_imgnorm(img_norm_arg):
+    mean = img_norm_arg[0]
+    mean = [float(m) for m in mean.split(',')]
+    if len(mean) == 1: mean = 3*mean
+    std = img_norm_arg[1]
+    std = [float(s) for s in std.split(',')]
+    if len(std) == 1: std = 3*std
+    assert len(mean) == len(std) == 3, '--img-norm invalid: {}'.format(img_norm_arg)
+    return mean,std
 
 ## transforms and augmentation ##
 def get_trainval_transforms(args):
@@ -336,13 +345,7 @@ def get_trainval_transforms(args):
     tform_resize = transforms.Resize([args.resize,args.resize])
     base_tforms = [tform_resize, transforms.ToTensor()]
     if args.img_norm:
-        mean = args.img_norm[0]
-        mean = [float(m) for m in mean.split(',')]
-        if len(mean)==1: mean = 3*mean
-        std = args.img_norm[1]
-        std = [float(s) for s in std.split(',')]
-        if len(std)==1: std = 3*std
-        assert len(mean)==len(std)==3, '--img-norm invalid: {}'.format(args.img_norm)
+        mean,std = parse_imgnorm(args.img_norm)
         tform_img_norm = transforms.Normalize(mean,std)
         base_tforms.append(tform_img_norm)
     # images from bins are already PIL_images, so no need to include ToPILImage()
@@ -428,10 +431,11 @@ class IfcbImageDataset(IterableDataset):
 
 
 class IfcbBinDataset(Dataset):
-    def __init__(self, bin, resize):
+    def __init__(self, bin, resize, img_norm=None):
         self.bin = bin
         self.images = []
         self.pids = []
+        self.img_norm = parse_imgnorm(img_norm) if img_norm else None
 
         # use 299x299 for inception_v3, all other models use 244x244
         if isinstance(resize, int):
@@ -455,6 +459,8 @@ class IfcbBinDataset(Dataset):
         img = img.convert('RGB')
         img = transforms.Resize(self.resize)(img)
         img = transforms.ToTensor()(img)
+        if self.img_norm:
+            img = transforms.Normalize(*self.img_norm)(img)
         return img, self.pids[item]
 
     def __len__(self):
