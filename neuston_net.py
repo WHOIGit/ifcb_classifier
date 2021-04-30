@@ -179,7 +179,7 @@ def do_run(args):
                 dd = ifcb.DataDirectory(args.SRC, blacklist=filter_keywords)
             else:
                 dd = ifcb.DataDirectory(args.SRC)
-        elif os.path.isfile(args.SRC) and args.SRC.endwith('.txt'): # TODO TEST: textfile bin run
+        elif os.path.isfile(args.SRC) and args.SRC.endswith('.txt'): # TODO TEST: textfile bin run
             with open(args.SRC,'r') as f:
                 bins = f.readlines()
             parent = os.path.commonpath(bins)
@@ -246,9 +246,10 @@ def do_run(args):
             for img in glob.iglob(os.path.join(args.SRC,'**','**'), recursive=True):
                 if img.endswith(IMG_EXTENSIONS):
                     img_paths.append(img)
-        elif os.path.isfile(args.SRC) and args.SRC.endwith('.txt'): # TODO TEST: textfile img run
+        elif os.path.isfile(args.SRC) and args.SRC.endswith('.txt'): # TODO TEST: textfile img run
             with open(args.SRC,'r') as f:
                 img_paths = f.readlines()
+                img_paths = [img.strip() for img in img_paths]
                 img_paths = [img for img in img_paths if img.endswith(IMG_EXTENSIONS)]
         elif args.SRC.endswith(IMG_EXTENSIONS): # single img # TODO TEST: single img run
             img_paths.append(args.SRC)

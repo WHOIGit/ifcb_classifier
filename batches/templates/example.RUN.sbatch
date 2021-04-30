@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 #SBATCH --job-name=RUN_ExampleDataset_ExampleModel
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -28,4 +29,4 @@ MODEL=training-output/TrainedExample/TrainedExample.ptl
 DATASET=run-data/ExampleDataset
 
 # RUN SCRIPT #
-python ./neuston_net.py RUN "$RUN_ID" "$MODEL" "$DATASET"
+python ./neuston_net.py RUN "$DATASET" "$MODEL" "$RUN_ID"

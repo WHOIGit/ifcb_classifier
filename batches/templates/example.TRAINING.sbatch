@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 #SBATCH --job-name=TRAIN_Example
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -28,6 +29,5 @@ MODEL=inception_v3
 DATASET=training-data/ExampleTrainingData
 
 # RUN SCRIPT #
-python ./neuston_net.py TRAIN "$TRAIN_ID" "$MODEL" "$DATASET" --flip xy
-
+python ./neuston_net.py TRAIN "$DATASET" "$MODEL" "$TRAIN_ID" --flip xy
 

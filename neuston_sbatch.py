@@ -44,8 +44,8 @@ echo "Environment... Loaded"
 ## DEFAULT PARAMETERS ##
 SBATCH_DDICT = dict(JOB_NAME='NN', EMAIL=default_email, WALLTIME='24:00:00',
                     CUDA_MODULES=CUDA101_MODULES, CONDA_ENV='ifcbnn',
-                    GPU_NUM=1, CPU_NUM=4, MEM_PER_CPU=10240, #10GB
-                    SLURM_LOG_DIR='slurmlogs',SLURM_LOG_FILE='%j.%x.out',
+                    GPU_NUM=1, CPU_NUM=4, MEM_PER_CPU=10240,  #10GB
+                    SLURM_LOG_DIR='slurm-logs', SLURM_LOG_FILE='%j.%x.out',
                     ABS_CWD=default_cwd)
 
 

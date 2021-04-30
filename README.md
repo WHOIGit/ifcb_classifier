@@ -68,7 +68,7 @@ usage: neuston_net.py TRAIN [-h] [--untrain] [--img-norm MEAN STD] [--seed SEED]
                             [--class-min MIN] [--emax MAX] [--emin MIN] [--estop STOP] [--flip {x,y,xy,x+V,y+V,xy+V}]
                             [--outdir OUTDIR] [--model-id MODEL_ID] [--epochs-log EPOCHS_LOG] [--args-log ARGS_LOG]
                             [--results FNAME [SERIES ...]]
-                            TRAINING_ID MODEL SRC
+                            SRC MODEL TRAINING_ID
 
 positional arguments:
   SRC                   Directory with class-label subfolders and images. May also be a dataset-configuration csv.
@@ -151,7 +151,7 @@ Here are the default behaviors for the above command.
 Additional flags for neuson_net.py RUN
 ```sh
 usage: neuston_net.py RUN [-h] [--type {bin,img}] [--outdir OUTDIR] [--outfile OUTFILE] [--filter IN|OUT [KEYWORD ...]]
-                          RUN_ID MODEL SRC
+                          SRC MODEL RUN_ID 
 
 positional arguments:
   SRC                   Resource(s) to be classified. Accepts a bin, an image, a text-file, or a directory. 
@@ -166,7 +166,7 @@ optional arguments:
   --outfile OUTFILE     Name/pattern of the output classification file. 
                         If TYPE==bin, "{bin}" in OUTFILE will be replaced with the bin id on a per-bin basis. 
                         A few output file formats are recognized: .json .mat .h5 (hdf).
-                        Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "img_results.csv".
+                        Default for TYPE==bin is "{bin}_class_v2.h5"; Default for TYPE==img is "img_results.json".
   --filter IN|OUT [KEYWORD ...]
                         Explicitly include (IN) or exclude (OUT) bins or image-files by KEYWORDs. 
                         KEYWORD may also be a text file containing KEYWORDs, line-deliminated.
