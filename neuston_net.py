@@ -243,9 +243,9 @@ def do_run(args):
     else:
         img_paths = []
         if os.path.isdir(args.SRC):
-            for img in glob.iglob(os.path.join(args.SRC,'**','**'), recursive=True):
-                if img.endswith(IMG_EXTENSIONS):
-                    img_paths.append(img)
+            for pardir,_,imgs in os.walk(args.SRC):
+                imgs = [os.path.join(pardir,img) for img in imgs if img.endswith(IMG_EXTENSIONS)]
+                img_paths.extend(imgs)
         elif os.path.isfile(args.SRC) and args.SRC.endswith('.txt'): # TODO TEST: textfile img run
             with open(args.SRC,'r') as f:
                 img_paths = f.readlines()
