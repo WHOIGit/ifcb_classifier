@@ -187,7 +187,7 @@ def save_run_results(input_images, output_scores, class_labels, timestamp, outdi
             dir_groups = {}
             input_src = input_obj if os.path.isdir(input_obj) else ''
             for img_path,img_classidx,img_scores in zip(input_images,output_classes,output_scores):
-                parent_dir = os.path.dirname(img_path.replace(input_src, ''))+os.sep
+                parent_dir = os.path.dirname(img_path.replace(input_src, ''))#+os.sep
 
                 if parent_dir not in dir_groups:
                     dir_groups[parent_dir] = {k: v if k not in ['input_images','output_classes','output_scores'] else [] for k,v in results.items()}
