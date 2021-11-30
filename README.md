@@ -19,7 +19,7 @@ All installation commands are to be run from a terminal.
 0. `cd $SCRATCH`
 0. `git clone https://github.com/WHOIGit/ifcb_classifier.git ifcbnn`
 0. `cd ifcbnn`
-0. `conda env create -f environment.yml`
+0. `conda env create -f requirements/pkgs.hpc.txt`
     * If you get “conda: command not found”, the anaconda hpc Module may not be loaded. Do `module load anaconda` and try again.
     * You can ensure modules load when you login with `module initadd anaconda`
 0. `conda activate ifcbnn`
@@ -113,6 +113,8 @@ Output Options:
   --model-id ID         Default is "{date}__{TRAINING_ID}"
   --epochs-log ELOG     Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv
   --args-log ALOG       Specify a human-readable yaml filename. Includes all user-specified and default training parameters. Default is args.yml
+  --onnx                Additionally output an onnx version of the model
+
   --results FNAME [SERIES ...]
                         FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". 
                                Accepts .json .h5 and .mat file formats.

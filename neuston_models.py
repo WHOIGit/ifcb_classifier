@@ -51,7 +51,7 @@ class NeustonModel(ptl.LightningModule):
 
         if isinstance(hparams,dict):
             hparams = argparse.Namespace(**hparams)
-        self.hparams = hparams
+        self.save_hyperparameters(hparams)
         self.criterion = nn.CrossEntropyLoss()
         self.model = get_namebrand_model(hparams.MODEL, len(hparams.classes), hparams.pretrained)
 
@@ -88,7 +88,6 @@ class NeustonModel(ptl.LightningModule):
     def training_epoch_end(self, steps):
         train_loss = torch.stack([batch['loss'] for batch in steps]).sum().item()
         #print('training_epoch_end: self.agg_train_loss={:.5f}, train_loss={:.5f}, DIFF={:.9f}'.format(self.agg_train_loss, train_loss, self.agg_train_loss-train_loss), end='\n\n')
-        self.agg_train_loss = 0.0
         #return dict(train_loss=train_loss)
 
     # Validation #
@@ -98,9 +97,9 @@ class NeustonModel(ptl.LightningModule):
         val_batch_loss = self.loss(input_classes, outputs)
         outputs = outputs.logits if isinstance(outputs,InceptionOutputs) else outputs
         outputs = softmax(outputs,dim=1)
-        return dict(val_batch_loss=val_batch_loss.cpu(),
-                    val_outputs=outputs.cpu(),
-                    val_input_classes=input_classes.cpu(),
+        return dict(val_batch_loss=val_batch_loss,
+                    val_outputs=outputs,
+                    val_input_classes=input_classes,
                     val_input_srcs=input_src)
 
     def validation_epoch_end(self, steps):
@@ -116,9 +115,9 @@ class NeustonModel(ptl.LightningModule):
             self.best_val_loss = validation_loss.item()
             self.best_epoch = self.current_epoch
 
-        outputs = torch.cat([batch['val_outputs'] for batch in steps],dim=0).numpy()
+        outputs = torch.cat([batch['val_outputs'] for batch in steps],dim=0).detach().cpu().numpy()
         output_classes = np.argmax(outputs, axis=1)
-        input_classes = torch.cat([batch['val_input_classes'] for batch in steps],dim=0).numpy()
+        input_classes = torch.cat([batch['val_input_classes'] for batch in steps],dim=0).detach().cpu().numpy()
         input_srcs = [item for sublist in [batch['val_input_srcs'] for batch in steps] for item in sublist]
 
         f1_weighted = metrics.f1_score(input_classes, output_classes, average='weighted')
@@ -144,13 +143,18 @@ class NeustonModel(ptl.LightningModule):
         self.log('f1_macro',f1_macro, on_epoch=True)
         self.log('f1_weighted',f1_weighted, on_epoch=True)
 
+        # Cleanup
+        self.agg_train_loss = 0.0
+
+        return dict(hiddens=dict(outputs=outputs))
+
     # RUNNING the model #
     def test_step(self, batch, batch_idx, dataloader_idx=None):
         input_data, input_srcs = batch
         outputs = self.forward(input_data)
         outputs = outputs.logits if isinstance(outputs,InceptionOutputs) else outputs
         outputs = softmax(outputs, dim=1)
-        return dict(test_outputs=outputs.cpu(), test_srcs=input_srcs)
+        return dict(test_outputs=outputs, test_srcs=input_srcs)
 
     def test_epoch_end(self, steps):
 
@@ -163,7 +167,7 @@ class NeustonModel(ptl.LightningModule):
 
         RRs = []
         for steps,dataset in zip(steps,datasets):
-            outputs = torch.cat([batch['test_outputs'] for batch in steps],dim=0).numpy()
+            outputs = torch.cat([batch['test_outputs'] for batch in steps],dim=0).detach().cpu().numpy()
             images = [batch['test_srcs'] for batch in steps]
             images = [item for sublist in images for item in sublist]  # flatten list
             if isinstance(dataset, IfcbBinDataset):

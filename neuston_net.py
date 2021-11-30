@@ -4,7 +4,7 @@
 # built in imports
 from shutil import copyfile
 import argparse
-import os, glob
+import os
 import datetime as dt
 
 # 3rd party imports
@@ -23,7 +23,6 @@ from neuston_data import get_trainval_datasets, IfcbBinDataset, ImageDataset
 
 ## NOTES ##
 # https://pytorch-lightning.readthedocs.io/en/0.8.5/introduction_guide.html
-
 
 def main(args):
 
@@ -56,6 +55,8 @@ def do_training(args):
         validation_results_callbacks.append(svr)
     callbacks.extend(validation_results_callbacks)
     callbacks.extend(plotting_callbacks)
+    if args.estop:
+        callbacks.append( EarlyStopping('val_loss', patience=args.estop) )
 
     # Set Seed. If args.seed is 0 ie None, a random seed value is used and stored
     args.seed = seed_everything(args.seed or None)
@@ -90,11 +91,11 @@ def do_training(args):
     # Setup Trainer
     chkpt_path = os.path.join(args.outdir, 'chkpts')
     os.makedirs(chkpt_path, exist_ok=True)
+    callbacks.append(ModelCheckpoint(dirpath=chkpt_path, monitor='val_loss'))
     trainer = Trainer(deterministic=True, logger=logger,
                       gpus=len(args.gpus) if args.gpus else None,
                       max_epochs=args.emax, min_epochs=args.emin,
-                      early_stop_callback=EarlyStopping('val_loss',patience=args.estop) if args.estop else False,
-                      checkpoint_callback=ModelCheckpoint(filepath=chkpt_path),
+                      checkpoint_callback=True,
                       callbacks=callbacks,
                       num_sanity_val_steps=0
                       )
@@ -120,6 +121,37 @@ def do_training(args):
         src_path = os.path.join(logger.experiment.log_dir, logger.experiment.NAME_HPARAMS_FILE)
         output_path = os.path.join(args.outdir, args.args_log)
         copyfile(src_path, output_path)
+
+    # ONNX Export
+    if args.onnx:
+        classifier.eval()
+        classifier.freeze()
+        output_path_onnx = os.path.join(args.outdir, args.model_id+'.onnx')
+        dummy_batch_size = 10
+        if 'inception' in str(type(classifier.model)):
+            dummy_input = torch.randn(dummy_batch_size,3,299,299,device='cpu')
+        else:
+            dummy_input = torch.randn(dummy_batch_size, 3, 244, 244, device='cpu')
+
+        # perform export
+        torch.onnx.export(classifier.model,          # model being run
+                          dummy_input,               # model input (or a tuple for multiple inputs)
+                          output_path_onnx,          # where to save the model (can be a file or file-like object)
+                          export_params=True,        # store the trained parameter weights inside the model file
+                          # opset_version=10,        # the ONNX version to export the model to
+                          do_constant_folding=True,  # whether to execute constant folding for optimization
+                          input_names=['input'],     # the model's input names
+                          output_names=['output'],   # the model's output names
+                          dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+                          #verbose=True,
+                          )
+        print('EXPORTED:', output_path_onnx)
+
+        # include classes file
+        classes_output = output_path_onnx+'.classes'
+        with open(classes_output, 'w') as f:
+            f.write('\n'.join(classifier.hparams.classes))
+        print('EXPORTED:', classes_output)
 
 
 def do_run(args):
@@ -330,6 +362,7 @@ def argparse_nn_train(train_subparser):
     out.add_argument('--model-id', default='{TRAIN_ID}', help='Set a specific model id. Patterns {TRAIN_DATE} and {TRAIN_ID} are recognized. Default is "{TRAIN_ID}"')
     out.add_argument('--epochs-log', metavar='ELOG', default='epochs.csv', help='Specify a csv filename. Includes epoch, loss, validation loss, and f1 scores. Default is epochs.csv')
     out.add_argument('--args-log', metavar='ALOG', default='args.yml', help='Specify a human-readable yaml filename. Includes all user-specified and default training parameters. Default is args.yml')
+    out.add_argument('--onnx', action='store_true', help='Additionally output an onnx version of the model')
     out.add_argument('--results', dest='result_files', metavar=('FNAME', 'SERIES'), nargs='+', action='append',
                      help='FNAME: Specify a validation-results filename or pattern. Valid patterns are: "{epoch}". Accepts .json .h5 and .mat file formats.'
                           'SERIES: Data to include in FNAME. The following are always included and need not be specified: model_id, timestamp, class_labels, input_classes, output_classes.'
