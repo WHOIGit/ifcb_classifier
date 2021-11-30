@@ -125,6 +125,7 @@ def argparse_sbatch():
         help='Directory to save slurm log file to. Defaults to OUTDIR (as defined by TRAIN or RUN subcommand)')
     slurm.add_argument('--ofile', default="{OUTDIR}/{PID}.{JOB_NAME}.sbatch",
         help='Save location for generated sbatch file. Defaults to "{OUTDIR}/{PID}.{JOB_NAME}.sbatch"')
+    slurm.add_argument('--conda-env', default='ifcbnn', help='The conda environment to activate for neuston_net.py. Default is "ifcbnn"')
     slurm.add_argument('--dry-run', default=False, action='store_true', help='Create the sbatch script but do not run it')
 
     return parser
