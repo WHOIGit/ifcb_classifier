@@ -68,6 +68,12 @@ def do_training(args):
     training_dataset, validation_dataset = get_trainval_datasets(args)
     assert training_dataset.classes == validation_dataset.classes
     args.classes = training_dataset.classes
+    # output list of training and validation images
+    with open(os.path.join(args.outdir,'training_images.list'), 'w') as f:
+        f.write('\n'.join(sorted(training_dataset.images)))
+    with open(os.path.join(args.outdir,'validation_images.list'),'w') as f:
+        f.write('\n'.join(sorted(validation_dataset.images)))
+
     # TODO add to args classes removed by class_min and skipped/combined from class_config
 
     print('Loading Training Dataloader...')
