@@ -37,7 +37,7 @@ class NeustonDataset(Dataset):
         self.maximum_images_per_class = maximum_images_per_class
         if maximum_images_per_class:
             assert maximum_images_per_class > self.minimum_images_per_class
-            images_perclass__maxlimited = {label: images[:maximum_images_per_class] for label, images in images_perclass__minthresh.items()}
+            images_perclass__maxlimited = {label: sorted(random.sample(images,maximum_images_per_class)) if maximum_images_per_class<len(images) else images for label,images in images_perclass__minthresh.items()}
             images_perclass__final = images_perclass__maxlimited
             self.classes_limited_from_too_many_samples = [c for c in self.classes if len(images_perclass__maxlimited[c]) < len(images_perclass__minthresh[c])]
         else:
@@ -184,7 +184,7 @@ class NeustonDataset(Dataset):
         return dataset1, dataset2
 
     @classmethod
-    def from_csv(cls, src, csv_file, column_to_run, transforms=None, minimum_images_per_class=None, maximum_images_per_class=None):
+    def from_csv(cls, src, csv_file, column_to_run, transforms=None, minimum_images_per_class=1, maximum_images_per_class=None):
         #1) load csv
         df = pd.read_csv(csv_file, header=0)
         base_list = df.iloc[:,0].tolist()      # first column

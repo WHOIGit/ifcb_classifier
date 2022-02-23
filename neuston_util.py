@@ -109,6 +109,7 @@ def make_class_config(args):
             header = next(reader)
             rows = list(reader)
         classes = [row[0] for row in rows if any([val!='0' for val in row[1:]])]
+    classes.sort()
 
     # creating csv data
     header = [args.dataset,'CONFIG1']

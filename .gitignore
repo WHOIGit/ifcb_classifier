@@ -4,4 +4,7 @@
 # ignore pycache
 __pycache__
 
+# other
+slurm-logs/*
+batches/*
 
