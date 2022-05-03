@@ -29,10 +29,11 @@ def do_export(args):
         os.makedirs(os.path.dirname(output), exist_ok=True)
     else:
         output = args.MODEL.replace('.ptl','.onnx')
+        if args.batchsize: output = output.replace('.onnx',f'.B{args.batchsize}.onnx')
         if args.half: output = output.replace('.onnx','.FP16.onnx')
 
     print(str(type(classifier.model)))
-    dummy_batch_size = 10
+    dummy_batch_size = args.batchsize or 10
     if 'inception' in str(type(classifier.model)):
         dummy_input = torch.randn(dummy_batch_size, 3, 299, 299, device=args.device)
     else:
@@ -43,12 +44,12 @@ def do_export(args):
     torch.onnx.export(classifier.model,          # model being run
                       dummy_input,               # model input (or a tuple for multiple inputs)
                       output,                    # where to save the model (can be a file or file-like object)
-                      export_params=True,        # store the trained parameter weights inside the model file
-                      opset_version=args.opset,  # the ONNX version to export the model to
+                      export_params = True,      # store the trained parameter weights inside the model file
+                      opset_version = args.opset,# the ONNX version to export the model to
                       do_constant_folding=True,  # whether to execute constant folding for optimization
                       input_names = ['input'],   # the model's input names
                       output_names = ['output'], # the model's output names
-                      dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+                      dynamic_axes = None if args.batchsize else {'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
                       #verbose=True,
                       )
     print('EXPORTED:',output)
@@ -114,8 +115,9 @@ if __name__ == '__main__':
     export.add_argument('MODEL', help='Model .ptl file to convert')
     export.add_argument('--half', action='store_true', help='Exports model using 16bit floating point precision')
     export.add_argument('--device', default='cpu', choices=('cpu','cuda'), help='Device to load model and tensors to. Default is "cpu"')
-    export.add_argument('--opset', default=9, type=int, help='Opset Version for onnx. Default is 9.')
+    export.add_argument('--opset', default=12, type=int, help='Opset Version for onnx. Default is 12.')
     export.add_argument('--output', default=None, help='Same as model file but with ".ptl" replaced with ".onnx"')
+    export.add_argument('--batchsize', type=int, help='Set a fixed batch size for the model')
 
     # RUN onnx
     run.add_argument('MODEL', help='onnx model file')

@@ -5,6 +5,7 @@ import os, sys
 import random
 
 # 3rd party imports
+import torch
 from torchvision import transforms, datasets
 from torch.utils.data.dataset import Dataset, IterableDataset
 from torch import Tensor
@@ -20,7 +21,8 @@ from ifcb.data.stitching import InfilledImages
 
 class NeustonDataset(Dataset):
 
-    def __init__(self, src, minimum_images_per_class=1, maximum_images_per_class=None, transforms=None, images_perclass=None):
+    def __init__(self, src, minimum_images_per_class=1, maximum_images_per_class=None, transforms=None, images_perclass=None,
+                 metadata_enable=False, metadata_scaling=1, metadata_options=tuple()):
         self.src = src
         if not images_perclass:
             images_perclass = self.fetch_images_perclass(src)
@@ -37,7 +39,7 @@ class NeustonDataset(Dataset):
         self.maximum_images_per_class = maximum_images_per_class
         if maximum_images_per_class:
             assert maximum_images_per_class > self.minimum_images_per_class
-            images_perclass__maxlimited = {label: images[:maximum_images_per_class] for label, images in images_perclass__minthresh.items()}
+            images_perclass__maxlimited = {label: sorted(random.sample(images,maximum_images_per_class)) if maximum_images_per_class<len(images) else images for label,images in images_perclass__minthresh.items()}
             images_perclass__final = images_perclass__maxlimited
             self.classes_limited_from_too_many_samples = [c for c in self.classes if len(images_perclass__maxlimited[c]) < len(images_perclass__minthresh[c])]
         else:
@@ -50,6 +52,29 @@ class NeustonDataset(Dataset):
         # flatten images_perclass to congruous list of image paths and target id's
         self.targets, self.images = zip(*((self.classes.index(t), i) for t in images_perclass__final for i in images_perclass__final[t]))
         self.transforms = transforms
+        self.metadata_enable = metadata_enable
+        self.metadata_scaling = metadata_scaling
+        self.metadata_options = metadata_options
+
+    def __getitem__(self, index):
+        img_path = self.images[index]
+        target_class = self.targets[index]
+        img_data = datasets.folder.default_loader(img_path)
+        w,h = img_data.size  # width,height tuple
+        if 'smallness' in self.metadata_options:
+            w,h = w-1380,h-1038  # smallness
+        img_dims = round(w*self.metadata_scaling),round(h*self.metadata_scaling)
+        img_metadata = torch.Tensor(img_dims)
+        if self.transforms is not None:
+            img_data = self.transforms(img_data)
+
+        if self.metadata_enable:
+            model_input = (img_data,img_metadata)
+        else:
+            model_input = img_data
+
+        return model_input, target_class, img_path
+
 
     @classmethod
     def fetch_images_perclass(cls, src, include_exclude_rename=None):
@@ -132,13 +157,11 @@ class NeustonDataset(Dataset):
                     random.shuffle(priority_images_perclass[key])
                 extend_dol(images_perclass,priority_images_perclass)  # TODO update clobbers previous lists. this is no bueno. we want to EXTEND any existing values
 
-            # TODO read src/config file.
-            #      (1) DONE! run cls.fetch_images(dataset, configuration) for each dataset
-            #      (2) DONE! on a dataset priority basis, randomize image orders (make sure random seed is known?)
-            #      (3) DONE! Then concat all perclass dataset images (still in priority order basis)
-            # TODO: test this mess :)
             return images_perclass
 
+    @property
+    def imgs(self):
+        return self.images
 
     @property
     def images_perclass(self):
@@ -153,6 +176,9 @@ class NeustonDataset(Dataset):
         for class_idx in self.targets:
             cpc[class_idx] += 1
         return cpc
+
+    def __len__(self):
+        return len(self.images)
 
     def split(self, ratio1, ratio2, seed=None, minimum_images_per_class='scale'):
         assert ratio1+ratio2 == 100, 'ratio1:ratio2 must sum to 100, instead got {}:{} (total: {})'.format(ratio1,ratio2,ratio1+ratio2)
@@ -177,14 +203,15 @@ class NeustonDataset(Dataset):
             d2_perclass[class_label] = d2_images
 
         #4) create and return new datasets
-        dataset1 = NeustonDataset(src=self.src, images_perclass=d1_perclass, transforms=self.transforms)
-        dataset2 = NeustonDataset(src=self.src, images_perclass=d2_perclass, transforms=self.transforms)
+        metadata_params = dict(metadata_enable=self.metadata_enable, metadata_scaling=self.metadata_scaling, metadata_options=self.metadata_options)
+        dataset1 = NeustonDataset(src=self.src, images_perclass=d1_perclass, transforms=self.transforms, **metadata_params)
+        dataset2 = NeustonDataset(src=self.src, images_perclass=d2_perclass, transforms=self.transforms, **metadata_params)
         assert dataset1.classes == dataset2.classes, 'd1-d2_classes:{}, d2-d1_classes:{}'.format(set(dataset1.classes)-set(dataset2.classes), set(dataset2.classes)-set(dataset1.classes))  # possibly fails due to edge case thresholding?
         assert len(dataset1)+len(dataset2) == len(self), 'd1_len:{}, d2_len:{}'.format(len(dataset1),len(dataset2))  # make sure we don't lose any images somewhere
         return dataset1, dataset2
 
     @classmethod
-    def from_csv(cls, src, csv_file, column_to_run, transforms=None, minimum_images_per_class=None, maximum_images_per_class=None):
+    def from_csv(cls, src, csv_file, column_to_run, **kwargs):
         #1) load csv
         df = pd.read_csv(csv_file, header=0)
         base_list = df.iloc[:,0].tolist()      # first column
@@ -250,24 +277,8 @@ class NeustonDataset(Dataset):
             print('\n    '.join([msg]+skipped_classes))
 
         #5) create dataset
-        return cls(src=src, images_perclass=new_images_perclass, transforms=transforms,
-                   minimum_images_per_class=minimum_images_per_class,
-                   maximum_images_per_class=maximum_images_per_class)
+        return cls(src=src, images_perclass=new_images_perclass, **kwargs)
 
-    def __getitem__(self, index):
-        path = self.images[index]
-        target = self.targets[index]
-        data = datasets.folder.default_loader(path)
-        if self.transforms is not None:
-            data = self.transforms(data)
-        return data, target, path
-
-    def __len__(self):
-        return len(self.images)
-
-    @property
-    def imgs(self):
-        return self.images
 
 
 class ImageFolderWithPaths(datasets.ImageFolder):
@@ -293,10 +304,12 @@ def get_trainval_datasets(args):
     ## initializing data ##
     print('Initializing Data...')
     if not args.class_config:
-        nd = NeustonDataset(src=args.SRC, minimum_images_per_class=args.class_min, maximum_images_per_class=args.class_max)
+        nd = NeustonDataset(src=args.SRC, minimum_images_per_class=args.class_min, maximum_images_per_class=args.class_max,
+                            metadata_enable=args.metadata_enable, metadata_scaling=args.metadata_scaling)
     else:
         nd = NeustonDataset.from_csv(src=args.SRC, csv_file=args.class_config[0], column_to_run=args.class_config[1],
-                                     minimum_images_per_class=args.class_min, maximum_images_per_class=args.class_max)
+                                     minimum_images_per_class=args.class_min, maximum_images_per_class=args.class_max,
+                                     metadata_enable=args.metadata_enable, metadata_scaling=args.metadata_scaling)
     # TODO record to args which classes were grouped, skipped, and limited.
     ratio1, ratio2 = map(int, args.split.split(':'))
 
@@ -340,10 +353,11 @@ def parse_imgnorm(img_norm_arg):
 
 ## transforms and augmentation ##
 def get_trainval_transforms(args):
-    # Transforms  #
-    args.resize = 299 if args.MODEL == 'inception_v3' else 224
+    # Transforms  #TODO
+    args.resize = 299 if args.MODEL in ['inception_v3','inception_v4'] else 244
     tform_resize = transforms.Resize([args.resize,args.resize])
     base_tforms = [tform_resize, transforms.ToTensor()]
+    #base_tforms = [transforms.ToTensor()]
     if args.img_norm:
         mean,std = parse_imgnorm(args.img_norm)
         tform_img_norm = transforms.Normalize(mean,std)
@@ -382,7 +396,7 @@ class ImageDataset(Dataset):
     adapted from: https://gist.github.com/andrewjong/6b02ff237533b3b2c554701fb53d5c4d
     """
 
-    def __init__(self, image_paths, resize=244, input_src=None):
+    def __init__(self, image_paths, resize=244, input_src=None, metadata_enable=False):
         self.input_src = input_src
         self.image_paths = [img for img in image_paths if img.endswith(datasets.folder.IMG_EXTENSIONS)]
 
@@ -390,17 +404,24 @@ class ImageDataset(Dataset):
         self.transform = transforms.Compose([transforms.Resize([resize, resize]),
                                              transforms.ToTensor()])
 
+        self.metadata_enable = metadata_enable
+
         if len(self.image_paths) < len(image_paths):
             print('{} non-image files were ommited'.format(len(image_paths)-len(self.image_paths)))
         if len(self.image_paths) == 0:
             raise RuntimeError('No images Loaded!!')
 
     def __getitem__(self, index):
-        path = self.image_paths[index]
-        image = datasets.folder.default_loader(path)
+        img_path = self.image_paths[index]
+        img_data = datasets.folder.default_loader(img_path)
+        img_dims = img_data.size  # width,height tuple
+        img_metadata = torch.Tensor(img_dims) / 1000
         if self.transform is not None:
-            image = self.transform(image)
-        return image, path
+            img_data = self.transform(img_data)
+        model_inputs = img_data
+        if self.metadata_enable:
+            model_inputs = (img_data,img_metadata)
+        return model_inputs, img_path
 
     def __len__(self):
         return len(self.image_paths)
@@ -431,11 +452,12 @@ class IfcbImageDataset(IterableDataset):
 
 
 class IfcbBinDataset(Dataset):
-    def __init__(self, bin, resize, img_norm=None):
+    def __init__(self, bin, resize, img_norm=None, metadata_enable=None):
         self.bin = bin
         self.images = []
         self.pids = []
         self.img_norm = parse_imgnorm(img_norm) if img_norm else None
+        self.metadata_enable = metadata_enable
 
         # use 299x299 for inception_v3, all other models use 244x244
         if isinstance(resize, int):
@@ -456,12 +478,20 @@ class IfcbBinDataset(Dataset):
     def __getitem__(self, item):
         img = self.images[item]
         img = transforms.ToPILImage(mode='L')(img)
+        img_dims = img.size  # width,height tuple
+        img_metadata = torch.Tensor(img_dims) / 1000
         img = img.convert('RGB')
         img = transforms.Resize(self.resize)(img)
         img = transforms.ToTensor()(img)
         if self.img_norm:
             img = transforms.Normalize(*self.img_norm)(img)
-        return img, self.pids[item]
+
+        if self.metadata_enable:
+            model_input = (img,img_metadata)
+        else:
+            model_input = img
+
+        return model_input, self.pids[item]
 
     def __len__(self):
         return len(self.pids)

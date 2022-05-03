@@ -207,7 +207,7 @@ def do_run(args):
                 filter_keywords.append(keyword)
 
     # create dataset
-    image_loaders = []
+    image_loaders = []  # only for --gobig
     if args.src_type == 'bin':
         # Formatting Dataset
         if os.path.isdir(args.SRC):
@@ -342,6 +342,11 @@ def argparse_nn_train(train_subparser):
     model.add_argument('--img-norm', nargs=2, metavar=('MEAN', 'STD'),
                        help='Normalize images by MEAN and STD. This is like whitebalancing. '
                             'eg1: "0.667 0.161", eg2: "0.056,0.058,0.051 0.067,0.071,0.057"')
+    model.add_argument('--metadata-enable', action='store_true')
+    model.add_argument('--metadata-scaling', nargs=1, metavar='SCALE', default=1.0, type=float)
+    #model.add_argument('--metadata-layer-nodes', nargs='+', default=['N+2'])
+    model.add_argument('--metadata-options', default=['bigness'], nargs='+', choices=('smallness','bigness'))
+    # TODO metadata as single param
     # TODO layer freezing and transfer learning params.
 
     data = train_subparser.add_argument_group(title='Dataset Adjustments', description=None)
@@ -355,9 +360,9 @@ def argparse_nn_train(train_subparser):
                       help=argparse.SUPPRESS)  # dupes placeholder. may not be needed.
 
     epochs = train_subparser.add_argument_group(title='Epoch Parameters', description=None)
-    epochs.add_argument('--emax', metavar='MAX', default=60, type=int, help='Maximum number of training epochs. Default is 60')
+    epochs.add_argument('--emax', metavar='MAX', default=100, type=int, help='Maximum number of training epochs. Default is 60')
     epochs.add_argument('--emin', metavar='MIN', default=10, type=int, help='Minimum number of training epochs. Default is 10')
-    epochs.add_argument('--estop', metavar='STOP', default=10, type=int, help='Early Stopping: Number of epochs following a best-epoch after-which to stop training. Set STOP=0 to disable. Default is 10')
+    epochs.add_argument('--estop', metavar='STOP', default=20, type=int, help='Early Stopping: Number of epochs following a best-epoch after-which to stop training. Set STOP=0 to disable. Default is 10')
 
     augs = train_subparser.add_argument_group(title='Augmentation Options', description='Data Augmentation is a technique by which training results may improved by simulating novel input')
     augs.add_argument('--flip', choices=['x', 'y', 'xy', 'x+V', 'y+V', 'xy+V'],

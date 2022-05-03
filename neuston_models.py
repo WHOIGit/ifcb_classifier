@@ -7,6 +7,7 @@ import argparse
 import torch
 import torch.nn as nn
 from torch.optim import Adam
+import torch.nn.functional as F
 from torch.nn.functional import softmax
 import torchvision.models as MODEL_MODULE
 from torchvision.models.inception import InceptionOutputs
@@ -17,13 +18,16 @@ import ifcb
 
 # project imports #
 from neuston_data import IfcbBinDataset
+from inception_v4 import inceptionv4
 
-
-def get_namebrand_model(model_name, num_o_classes, pretrained=False):
-    if model_name == 'inception_v3':
+def get_namebrand_model(model_name, num_o_classes, pretrained=False, metadata=False):
+    if metadata:
+        model = MetadataModel(model_name, num_o_classes, pretrained)
+    elif model_name == 'inception_v3':
         model = MODEL_MODULE.inception_v3(pretrained)  #, num_classes=num_o_classes, aux_logits=False)
         model.AuxLogits.fc = nn.Linear(model.AuxLogits.fc.in_features, num_o_classes)
         model.fc = nn.Linear(model.fc.in_features, num_o_classes)
+        # TODO monkey wrench an adl. input layer towards the end for metadata injection
     elif model_name == 'alexnet':
         model = getattr(MODEL_MODULE, model_name)(pretrained)
         model.classifier[6] = nn.Linear(model.classifier[6].in_features, num_o_classes)
@@ -40,9 +44,38 @@ def get_namebrand_model(model_name, num_o_classes, pretrained=False):
     elif model_name.startswith('densenet'):
         model = getattr(MODEL_MODULE, model_name)(pretrained)
         model.classifier = nn.Linear(model.classifier.in_features, num_o_classes)
+    elif model_name == 'inception_v4':
+        if pretrained:
+            model = inceptionv4(num_classes=1001, pretrained='imagenet+background')
+            #model.AuxLogits.fc = nn.Linear(model.AuxLogits.fc.in_features, num_o_classes)
+            model.last_linear = nn.Linear(model.last_linear.in_features, num_o_classes)
+        else:
+            model = inceptionv4(num_classes=num_o_classes, pretrained=None)
     else:
-        raise KeyError("model unknown!")
+        raise KeyError("model unknown!", model_name)
     return model
+
+
+
+class MetadataModel(nn.Module):
+    def __init__(self, model_name, num_o_classes, pretrained, metadata_dim=2):  #metadata_layer_nodes=('N',),
+        super(MetadataModel, self).__init__()
+        self.cnn = get_namebrand_model(model_name, num_o_classes, pretrained)
+
+        hidden_layer = num_o_classes
+        self.fc1 = nn.Linear(num_o_classes + metadata_dim, hidden_layer)
+        self.fc2 = nn.Linear(hidden_layer, num_o_classes)
+
+    def forward(self, inputs):
+        image,metadata = inputs
+        cnn_outputs = self.cnn(image)
+        if isinstance(cnn_outputs, tuple) and len(cnn_outputs) == 2:  # inception_v3
+            cnn_outputs, aux_outputs = cnn_outputs
+
+        x = torch.cat((cnn_outputs, metadata), dim=1)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
 
 
 class NeustonModel(ptl.LightningModule):
@@ -51,9 +84,19 @@ class NeustonModel(ptl.LightningModule):
 
         if isinstance(hparams,dict):
             hparams = argparse.Namespace(**hparams)
+        try:
+            if not hparams.metadata_enable:
+                del hparams.metadata_scaling
+                del hparams.metadata_options
+        except AttributeError: pass
         self.save_hyperparameters(hparams)
+
         self.criterion = nn.CrossEntropyLoss()
-        self.model = get_namebrand_model(hparams.MODEL, len(hparams.classes), hparams.pretrained)
+
+        if 'metadata_enable' in hparams and hparams.metadata_enable:
+            self.model = MetadataModel(hparams.MODEL, len(hparams.classes), hparams.pretrained)
+        else:
+            self.model = get_namebrand_model(hparams.MODEL, len(hparams.classes), hparams.pretrained)
 
         # Instance Variables
         self.best_val_loss = np.inf
@@ -65,6 +108,7 @@ class NeustonModel(ptl.LightningModule):
 
     def forward(self, inputs):
         outputs = self.model(inputs)
+        # inputs is a tuple of img_data,metadata for MetadataModel models
         return outputs
 
     def loss(self, inputs, outputs):
@@ -79,7 +123,7 @@ class NeustonModel(ptl.LightningModule):
 
     # TRAINING #
     def training_step(self, batch, batch_nb):
-        input_data, input_classes, input_src =  batch
+        input_data, input_classes, input_src = batch
         outputs = self.forward(input_data)
         batch_loss = self.loss(input_classes, outputs)
         self.agg_train_loss += batch_loss.item()
