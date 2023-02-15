@@ -202,7 +202,7 @@ def do_run(args):
         for keyword in args.filter[1:]:
             if os.path.isfile(keyword):
                 with open(keyword) as f:
-                    filter_keywords.extend(f.readlines())
+                    filter_keywords.extend(f.read().splitlines())
             else:
                 filter_keywords.append(keyword)
 
