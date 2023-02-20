@@ -71,7 +71,7 @@ def do_run(args):
             img_paths.extend(imgs)
     elif os.path.isfile(args.SRC) and args.SRC.endswith(('.txt','.list')):  # TODO TEST: textfile img run
         with open(args.SRC, 'r') as f:
-            img_paths = f.readlines()
+            img_paths = f.read().splitlines()
             img_paths = [img.strip() for img in img_paths]
             img_paths = [img for img in img_paths if img.endswith(IMG_EXTENSIONS)]
     elif args.SRC.endswith(IMG_EXTENSIONS):  # single img # TODO TEST: single img run
@@ -97,7 +97,7 @@ def do_run(args):
     print(classfile)
     if os.path.isfile(classfile):
         with open(classfile) as f:
-            classes = [c.rstrip('\n') for c in f.readlines()]
+            classes = f.read().splitlines()
         output_labels = [classes[idx] for idx in output_classes]
         print(output_labels)
 

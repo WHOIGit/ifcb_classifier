@@ -202,7 +202,7 @@ def do_run(args):
         for keyword in args.filter[1:]:
             if os.path.isfile(keyword):
                 with open(keyword) as f:
-                    filter_keywords.extend(f.readlines())
+                    filter_keywords.extend(f.read().splitlines())
             else:
                 filter_keywords.append(keyword)
 
@@ -219,7 +219,7 @@ def do_run(args):
                 dd = ifcb.DataDirectory(args.SRC)
         elif os.path.isfile(args.SRC) and args.SRC.endswith('.txt'): # TODO TEST: textfile bin run
             with open(args.SRC,'r') as f:
-                bins = f.readlines()
+                bins = f.read().splitlines()
             parent = os.path.commonpath(bins)
             dd = ifcb.DataDirectory(parent,whitelist=bins)
         else: # single bin # TODO TEST: single bin run
@@ -286,7 +286,7 @@ def do_run(args):
                 img_paths.extend(imgs)
         elif os.path.isfile(args.SRC) and args.SRC.endswith('.txt'): # TODO TEST: textfile img run
             with open(args.SRC,'r') as f:
-                img_paths = f.readlines()
+                img_paths = f.read().splitlines()
                 img_paths = [img.strip() for img in img_paths]
                 img_paths = [img for img in img_paths if img.endswith(IMG_EXTENSIONS)]
         elif args.SRC.endswith(IMG_EXTENSIONS): # single img # TODO TEST: single img run
