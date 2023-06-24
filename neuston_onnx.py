@@ -32,12 +32,17 @@ def do_export(args):
         if args.half: output = output.replace('.onnx','.FP16.onnx')
 
     print(str(type(classifier.model)))
-    dummy_batch_size = 10
+    
+    dummy_batch_size = args.batchsize if args.batchsize else 10
     if 'inception' in str(type(classifier.model)):
         dummy_input = torch.randn(dummy_batch_size, 3, 299, 299, device=args.device)
     else:
         dummy_input = torch.randn(dummy_batch_size, 3, 224, 224, device=args.device)
+    
     if args.half: dummy_input = dummy_input.half()
+    
+    if args.batchsize: dynamic_axes = None
+    else: dynamic_axes = {'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
 
     # perform export
     torch.onnx.export(classifier.model,          # model being run
@@ -48,7 +53,7 @@ def do_export(args):
                       do_constant_folding=True,  # whether to execute constant folding for optimization
                       input_names = ['input'],   # the model's input names
                       output_names = ['output'], # the model's output names
-                      dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+                      dynamic_axes=dynamic_axes,
                       #verbose=True,
                       )
     print('EXPORTED:',output)
@@ -114,7 +119,8 @@ if __name__ == '__main__':
     export.add_argument('MODEL', help='Model .ptl file to convert')
     export.add_argument('--half', action='store_true', help='Exports model using 16bit floating point precision')
     export.add_argument('--device', default='cpu', choices=('cpu','cuda'), help='Device to load model and tensors to. Default is "cpu"')
-    export.add_argument('--opset', default=9, type=int, help='Opset Version for onnx. Default is 9.')
+    export.add_argument('--opset', default=12, type=int, help='Opset Version for onnx. Default is 12.')
+    export.add_argument('--batchsize', default=0, type=int, help='Set a fixed batch input/output batch size for the model. Default is None, ie dynamic batch size')
     export.add_argument('--output', default=None, help='Same as model file but with ".ptl" replaced with ".onnx"')
 
     # RUN onnx
