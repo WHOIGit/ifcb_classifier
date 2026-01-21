@@ -250,7 +250,12 @@ def do_run(args):
                     print('{} result-file(s) already exist - skipping this bin'.format(bin_obj))
                     continue
 
-            bin_dataset = IfcbBinDataset(bin_fileset, classifier.hparams.resize, classifier.hparams.img_norm)
+            try:
+                bin_dataset = IfcbBinDataset(bin_fileset, classifier.hparams.resize, classifier.hparams.img_norm)
+            except Exception as e:
+                error_bins.append((bin_obj, e))
+                continue
+
             image_loader = DataLoader(bin_dataset, batch_size=args.batch_size,
                                       pin_memory=True, num_workers=args.loaders)
 
